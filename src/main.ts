@@ -5,8 +5,13 @@ import type { AppState, ChatMessage, Conversation } from './types'
 
 const DEFAULT_MODELS = [
   'openai/gpt-4.1-mini',
+  'openai/gpt-4.1',
   'anthropic/claude-3.5-sonnet',
-  'google/gemini-2.0-flash-001'
+  'anthropic/claude-3.7-sonnet',
+  'google/gemini-2.0-flash-001',
+  'google/gemini-2.5-pro',
+  'deepseek/deepseek-chat-v3-0324',
+  'deepseek/deepseek-r1'
 ]
 
 const repository = new LocalConversationsRepository()
