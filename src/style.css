@@ -156,44 +156,75 @@ button {
 
 .composer {
   border-top: 1px solid var(--line);
-  padding: 14px;
+  padding: 14px 16px 18px;
   background: var(--panel);
 }
 
-.composer-row {
+.composer-shell {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
-  margin-top: 10px;
+  background: #0f1217;
+  border: 1px solid #273142;
+  border-radius: 18px;
+  padding: 10px;
 }
 
-.file-button {
+.attach-button {
   position: relative;
   overflow: hidden;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: #12151a;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 10px;
+  background: #141821;
+  border: 1px solid #2a3549;
+  border-radius: 12px;
+  width: 40px;
+  height: 40px;
   cursor: pointer;
+  color: #d4deef;
+  font-size: 28px;
+  line-height: 1;
+  padding-bottom: 4px;
 }
 
-.file-button input {
+.attach-button input {
   position: absolute;
   inset: 0;
   opacity: 0;
   cursor: pointer;
 }
 
+#prompt-input {
+  border: 0;
+  background: transparent;
+  min-height: 40px;
+  padding: 0;
+}
+
+#prompt-input:focus {
+  outline: none;
+}
+
+.send-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  padding: 0;
+  border-color: #2a3549;
+  background: #141821;
+  font-size: 18px;
+}
+
 .file-name {
+  display: block;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 360px;
+  max-width: 100%;
+  margin-top: 8px;
 }
 
 .hint {

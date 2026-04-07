@@ -44,15 +44,15 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div id="messages" class="messages"></div>
 
     <form id="composer-form" class="composer">
-      <textarea id="prompt-input" placeholder="Напиши сообщение..." rows="3"></textarea>
-      <div class="composer-row">
-        <label class="file-button">
-          Прикрепить файл
+      <div class="composer-shell">
+        <label class="attach-button" title="Прикрепить файл">
+          +
           <input id="file-input" type="file" />
         </label>
-        <span id="file-name" class="file-name">Файл не выбран</span>
-        <button id="send-button" type="submit">Отправить</button>
+        <textarea id="prompt-input" placeholder="Сообщение..." rows="1"></textarea>
+        <button id="send-button" type="submit" class="send-icon" title="Отправить">➤</button>
       </div>
+      <span id="file-name" class="file-name">Файл не выбран</span>
     </form>
   </section>
 </main>
