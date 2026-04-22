@@ -357,15 +357,27 @@ function buildDocumentSystemPrompt(): string {
   return [
     'Ты персональный ассистент. У пользователя есть следующие документы:',
     docLines || 'нет',
-    todoLines ? `\nАктивные напоминания:\n${todoLines}` : ''
+    todoLines ? `\nАктивные напоминания:\n${todoLines}` : '',
+    '\nЕсли пользователь просит показать фото документа — скажи что показываешь его. Фото будет отображено в интерфейсе автоматически. Не говори что не можешь показать фото.'
   ].filter(Boolean).join('\n\n')
 }
 
 function findDocumentImage(text: string): string | undefined {
   const lower = text.toLowerCase()
+  const photoKeywords = ['фото', 'покажи', 'картинк', 'изображени', 'скан', 'фотограф', 'photo', 'image']
+
+  // сначала пробуем найти по названию документа
   for (const doc of documents) {
     if (doc.imageDataUrl && lower.includes(doc.title.toLowerCase())) return doc.imageDataUrl
   }
+
+  // если просят фото без указания документа — берём первый документ с фото
+  const hasPhotoRequest = photoKeywords.some((kw) => lower.includes(kw))
+  if (hasPhotoRequest) {
+    const withPhoto = documents.filter((d) => d.imageDataUrl)
+    if (withPhoto.length > 0) return withPhoto[0].imageDataUrl
+  }
+
   return undefined
 }
 
