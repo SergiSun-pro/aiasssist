@@ -5,6 +5,7 @@ import { LocalConversationsRepository } from './storage'
 import type { AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro', 'deepseek/deepseek-chat-v3-0324']
+const VISION_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro']
 const repository = new LocalConversationsRepository()
 const initialState = repository.load()
 
@@ -180,14 +181,17 @@ function renderDocuments() {
   document.querySelector<HTMLButtonElement>('#doc-extract')!.onclick = async () => {
     if (!docImageDataUrl) { alert('Сначала выберите фото документа'); return }
     const btn = document.querySelector<HTMLButtonElement>('#doc-extract')!
+    const extractModel = VISION_MODELS.includes(modelSelect.value) ? modelSelect.value : VISION_MODELS[0]
     btn.textContent = 'Распознаю...'
     btn.disabled = true
     try {
-      const parsed = await extractDocument(docImageDataUrl, modelSelect.value)
+      const parsed = await extractDocument(docImageDataUrl, extractModel)
       ;(document.querySelector<HTMLInputElement>('#doc-title')!).value = parsed.title
       ;(document.querySelector<HTMLInputElement>('#doc-type')!).value = parsed.docType
       ;(document.querySelector<HTMLInputElement>('#doc-expires')!).value = parsed.expiresAt ?? ''
       renderFieldsList(Object.entries(parsed.fields))
+    } catch (error) {
+      alert(`Ошибка распознавания: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`)
     } finally {
       btn.textContent = 'Распознать поля с фото'
       btn.disabled = false
