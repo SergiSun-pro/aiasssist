@@ -120,13 +120,13 @@ function renderChat() {
       userMessage.content = `${text}\n\n[Файл: ${file.name}]\n${await getFilePreview(file)}`
       imageDataUrl = await getImageDataUrl(file)
     }
+    if (!imageDataUrl) imageDataUrl = findDocumentImage(text)
+    if (imageDataUrl) userMessage.displayImage = imageDataUrl
     currentConversation.messages.push(userMessage)
     currentConversation.updatedAt = Date.now()
     if (currentConversation.title === 'Новая беседа') currentConversation.title = text.slice(0, 40)
     persistAndRender()
     try {
-      if (!imageDataUrl) imageDataUrl = findDocumentImage(text)
-      if (imageDataUrl) userMessage.displayImage = imageDataUrl
       const reply = await requestOpenRouterCompletion({
         model: modelSelect.value,
         messages: currentConversation.messages,
@@ -358,7 +358,7 @@ function buildDocumentSystemPrompt(): string {
     'Ты персональный ассистент. У пользователя есть следующие документы:',
     docLines || 'нет',
     todoLines ? `\nАктивные напоминания:\n${todoLines}` : '',
-    '\nВАЖНО про фото: когда пользователь просит показать фото документа, изображение уже автоматически отображается в интерфейсе чата над твоим ответом. Ты получаешь это фото вместе с сообщением пользователя и можешь его описать. Никогда не говори что не можешь показать или отправить фото — просто подтверди что показываешь его и при необходимости опиши что на нём.'
+    '\nВАЖНО про фото: когда пользователь просит показать фото документа, изображение уже автоматически отображается в интерфейсе над твоим ответом. Ты получаешь это фото вместе с сообщением. Никогда не говори что не можешь показать фото. Никогда не пиши markdown-ссылки на изображения вида ![](). Просто скажи "Вот фото:" и при желании опиши что на нём видно.'
   ].filter(Boolean).join('\n\n')
 }
 
