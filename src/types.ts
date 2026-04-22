@@ -44,3 +44,10 @@ export interface TodoItem {
   done: boolean
   createdAt: number
 }
+
+export interface AppNotification {
+  id: string
+  text: string
+  createdAt: number
+  read: boolean
+}

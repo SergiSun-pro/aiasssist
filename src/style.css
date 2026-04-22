@@ -432,6 +432,86 @@ button {
   color: var(--text);
 }
 
+.tab-notify {
+  position: relative;
+}
+
+.notify-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #e84c4c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.notify-badge.hidden {
+  display: none;
+}
+
+.notifications-panel {
+  padding: 16px;
+  overflow: auto;
+}
+
+.notify-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notify-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: #111a27;
+}
+
+.notify-item.read {
+  border-color: var(--line);
+  background: #141820;
+}
+
+.notify-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.notify-item.read .notify-dot {
+  background: var(--line);
+}
+
+.notify-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notify-text {
+  margin: 0;
+  font-size: 14px;
+}
+
+.notify-date {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .todo-row {
   display: flex;
   gap: 8px;

@@ -2,7 +2,7 @@ import './style.css'
 import { createDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone } from './documentsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
-import type { AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
+import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro']
@@ -12,8 +12,21 @@ const initialState = repository.load()
 const state: AppState = { conversations: initialState.conversations, activeConversationId: initialState.activeConversationId }
 let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
-let activeTab: 'chat' | 'documents' | 'todos' | 'base' = 'chat'
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' = 'chat'
 let docImageDataUrl: string | undefined
+let notifications: AppNotification[] = loadNotifications()
+
+function loadNotifications(): AppNotification[] {
+  try { return JSON.parse(localStorage.getItem('aiassist.notifications.v1') ?? '[]') } catch { return [] }
+}
+function saveNotifications() {
+  localStorage.setItem('aiassist.notifications.v1', JSON.stringify(notifications))
+}
+function addNotification(text: string) {
+  notifications.unshift({ id: createId(), text, createdAt: Date.now(), read: false })
+  saveNotifications()
+  updateNotificationBadge()
+}
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout">
   <aside class="sidebar">
@@ -25,6 +38,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout
       <button id="tab-docs" class="tab">Документы</button>
       <button id="tab-base" class="tab">База</button>
       <button id="tab-todos" class="tab">Дела</button>
+      <button id="tab-notifications" class="tab tab-notify">Уведомления<span id="notify-badge" class="notify-badge hidden"></span></button>
     </nav>
   </aside>
   <section class="chat-panel">
@@ -48,18 +62,24 @@ document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click'
 document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
 document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
 document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
+document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
 document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
 
-refreshData().finally(render)
+refreshData().finally(() => { render(); updateNotificationBadge() })
 requestNotificationPermission()
 runRemindersAndNotify()
 setInterval(runRemindersAndNotify, 30 * 60 * 1000)
 
-function setTab(tab: 'chat' | 'documents' | 'todos' | 'base') {
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications') {
   activeTab = tab
   document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'))
   const tabId = tab === 'documents' ? 'docs' : tab
   document.querySelector(`#tab-${tabId}`)?.classList.add('active')
+  if (tab === 'notifications') {
+    notifications.forEach((n) => (n.read = true))
+    saveNotifications()
+    updateNotificationBadge()
+  }
   render()
 }
 
@@ -69,6 +89,32 @@ function render() {
   if (activeTab === 'documents') renderDocuments()
   if (activeTab === 'base') renderBase()
   if (activeTab === 'todos') renderTodos()
+  if (activeTab === 'notifications') renderNotifications()
+}
+
+function updateNotificationBadge() {
+  const badge = document.querySelector<HTMLSpanElement>('#notify-badge')
+  if (!badge) return
+  const unread = notifications.filter((n) => !n.read).length
+  if (unread > 0) {
+    badge.textContent = String(unread)
+    badge.classList.remove('hidden')
+  } else {
+    badge.classList.add('hidden')
+  }
+}
+
+function renderNotifications() {
+  contentRoot.innerHTML = `<section class="notifications-panel"><div id="notify-list" class="notify-list"></div></section>`
+  const list = document.querySelector<HTMLDivElement>('#notify-list')!
+  if (notifications.length === 0) { list.innerHTML = '<p class="hint">Уведомлений пока нет.</p>'; return }
+  for (const n of notifications) {
+    const item = document.createElement('div')
+    item.className = `notify-item${n.read ? ' read' : ''}`
+    const date = new Date(n.createdAt).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    item.innerHTML = `<span class="notify-dot"></span><div class="notify-body"><p class="notify-text">${escapeAttr(n.text)}</p><span class="notify-date">${date}</span></div>`
+    list.appendChild(item)
+  }
 }
 
 function renderConversations() {
@@ -427,12 +473,16 @@ async function runRemindersAndNotify() {
   try {
     const newTodos = await runReminders()
     await refreshData()
-    if (activeTab === 'todos') renderTodos()
-    if (newTodos.length > 0 && 'Notification' in window && Notification.permission === 'granted') {
+    if (newTodos.length > 0) {
       for (const todo of newTodos) {
-        new Notification('Напоминание', { body: todo.text, icon: '/pwa-icon.svg' })
+        addNotification(todo.text)
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('Напоминание', { body: todo.text, icon: '/pwa-icon.svg' })
+        }
       }
     }
+    if (activeTab === 'todos') renderTodos()
+    if (activeTab === 'notifications') renderNotifications()
   } catch {
     // сеть недоступна — игнорируем
   }
