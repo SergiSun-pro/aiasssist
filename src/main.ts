@@ -31,9 +31,14 @@ function addNotification(text: string) {
   updateNotificationBadge()
 }
 
-let modelSelect: HTMLSelectElement
+let modelSelect: HTMLSelectElement | undefined
 let contentRoot: HTMLDivElement
 let conversationListEl: HTMLDivElement
+let selectedModel: string = localStorage.getItem('aiassist.model.v1') ?? 'openai/gpt-4.1-mini'
+
+function getCurrentModel(): string {
+  return modelSelect?.value || selectedModel
+}
 
 function checkAuthAndInit() {
   currentUser = getCurrentUser()
@@ -77,61 +82,67 @@ function showLoginForm() {
 
 function initApp() {
   const isAdmin = currentUser?.role === 'admin'
-  document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout">
-  <aside class="sidebar">
-    <h1>aiasssist</h1>
-    <button id="new-chat-button">+ Новая беседа</button>
-    <div id="conversation-list" class="conversation-list"></div>
-    <nav class="tabs">
-      <button id="tab-chat" class="tab active">Чат</button>
-      <button id="tab-docs" class="tab">Документы</button>
-      <button id="tab-base" class="tab">База</button>
-      <button id="tab-todos" class="tab">Дела</button>
-      <button id="tab-notifications" class="tab tab-notify">Уведомления<span id="notify-badge" class="notify-badge hidden"></span></button>
-      ${isAdmin ? '<button id="tab-users" class="tab">Пользователи</button>' : ''}
+  document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<div class="app-root">
+  <header class="app-header">
+    <div class="app-brand">aiasssist</div>
+    <nav class="app-nav">
+      <button id="tab-chat" class="nav-tab active" data-label="Чат"><span class="nav-icon">💬</span><span class="nav-label">Чат</span></button>
+      <button id="tab-docs" class="nav-tab" data-label="Документы"><span class="nav-icon">📄</span><span class="nav-label">Документы</span></button>
+      <button id="tab-base" class="nav-tab" data-label="База"><span class="nav-icon">📚</span><span class="nav-label">База</span></button>
+      <button id="tab-todos" class="nav-tab" data-label="Дела"><span class="nav-icon">✓</span><span class="nav-label">Дела</span></button>
+      <button id="tab-notifications" class="nav-tab tab-notify" data-label="Уведомления"><span class="nav-icon">🔔</span><span class="nav-label">Уведомления</span><span id="notify-badge" class="notify-badge hidden"></span></button>
+      ${isAdmin ? '<button id="tab-users" class="nav-tab" data-label="Пользователи"><span class="nav-icon">👥</span><span class="nav-label">Пользователи</span></button>' : ''}
     </nav>
-    <div class="sidebar-footer">
-      <span class="sidebar-user">${currentUser?.username ?? ''}</span>
-      <button id="logout-btn" class="logout-btn">Выйти</button>
+    <div class="app-user">
+      <span class="app-user-name">${currentUser?.username ?? ''}</span>
+      <button id="logout-btn" class="logout-btn" title="Выйти">⎋</button>
     </div>
-  </aside>
-  <section class="chat-panel">
-    <header class="toolbar">
-      <label class="toolbar-item"><span>Модель</span><select id="model-select"></select></label>
-      <button id="run-reminders" type="button">Обновить напоминания</button>
-    </header>
-    <div id="content-root"></div>
-  </section>
-</main>`
+  </header>
+  <main class="app-main">
+    <aside id="chat-sidebar" class="chat-sidebar">
+      <button id="new-chat-button" class="new-chat-btn">+ Новая беседа</button>
+      <div class="conversations-label">Беседы</div>
+      <div id="conversation-list" class="conversation-list"></div>
+    </aside>
+    <section class="app-content">
+      <div id="content-root"></div>
+    </section>
+  </main>
+</div>`
 
-  modelSelect = document.querySelector<HTMLSelectElement>('#model-select')!
   contentRoot = document.querySelector<HTMLDivElement>('#content-root')!
   conversationListEl = document.querySelector<HTMLDivElement>('#conversation-list')!
 
-  DEFAULT_MODELS.forEach((model) => modelSelect.append(new Option(model, model)))
   if (!state.activeConversationId) createConversation('Новая беседа')
 
-  document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener('click', () => { createConversation('Новая беседа'); render() })
+  document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener('click', () => { createConversation('Новая беседа'); setTab('chat') })
   document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click', () => setTab('chat'))
   document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
   document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
   document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
   document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
-  document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
   document.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => { clearToken(); currentUser = null; showLoginForm() })
   if (isAdmin) document.querySelector<HTMLButtonElement>('#tab-users')?.addEventListener('click', () => setTab('users'))
 
+  applyTabLayout()
   refreshData().finally(() => { render(); updateNotificationBadge() })
   requestNotificationPermission()
   runRemindersAndNotify()
   setInterval(runRemindersAndNotify, 30 * 60 * 1000)
 }
 
+function applyTabLayout() {
+  const sidebar = document.querySelector<HTMLElement>('#chat-sidebar')
+  if (!sidebar) return
+  if (activeTab === 'chat') sidebar.classList.remove('hidden-sidebar')
+  else sidebar.classList.add('hidden-sidebar')
+}
+
 checkAuthAndInit()
 
 function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users') {
   activeTab = tab
-  document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'))
+  document.querySelectorAll('.nav-tab').forEach((el) => el.classList.remove('active'))
   const tabId = tab === 'documents' ? 'docs' : tab
   document.querySelector(`#tab-${tabId}`)?.classList.add('active')
   if (tab === 'notifications') {
@@ -139,6 +150,7 @@ function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' |
     saveNotifications()
     updateNotificationBadge()
   }
+  applyTabLayout()
   render()
 }
 
@@ -166,17 +178,27 @@ function updateNotificationBadge() {
 
 async function renderUsers() {
   contentRoot.innerHTML = `<section class="documents">
-    <h2 style="margin:0 0 14px">Пользователи</h2>
-    <form id="user-form" class="doc-form" style="max-width:400px">
-      <input id="user-username" placeholder="Логин" required />
-      <input id="user-password" type="password" placeholder="Пароль" required />
-      <label class="checkbox-label">
-        <input id="user-is-admin" type="checkbox" /> Администратор
-      </label>
-      <button type="submit">Создать пользователя</button>
+    <div class="page-header-row">
+      <div><h2>Пользователи</h2><p class="page-subtitle">Управление доступом к приложению</p></div>
+    </div>
+    <form id="user-form" class="doc-form users-form">
+      <div class="form-section">
+        <label class="form-label">Новый пользователь</label>
+        <div class="form-row">
+          <input id="user-username" placeholder="Логин" required />
+          <input id="user-password" type="password" placeholder="Пароль" required />
+        </div>
+        <label class="checkbox-label">
+          <input id="user-is-admin" type="checkbox" /> Сделать администратором
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Создать пользователя</button>
+      </div>
       <p id="user-error" class="login-error hidden"></p>
     </form>
-    <div id="users-list" class="docs-list" style="margin-top:16px"></div>
+    <div class="users-section-label">Все пользователи</div>
+    <div id="users-list" class="users-list"></div>
   </section>`
 
   async function loadAndRenderList() {
@@ -186,10 +208,17 @@ async function renderUsers() {
       list.innerHTML = ''
       for (const u of users) {
         const row = document.createElement('div')
-        row.className = 'doc-card'
-        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-direction:row;gap:12px'
-        row.innerHTML = `<div><strong>${escapeAttr(u.username)}</strong> <span style="color:var(--muted);font-size:12px">${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></div>${u.id !== currentUser?.id ? `<button class="field-remove" data-id="${u.id}" title="Удалить">✕</button>` : ''}`
-        row.querySelector<HTMLButtonElement>('.field-remove')?.addEventListener('click', async () => {
+        row.className = 'user-row'
+        const isSelf = u.id === currentUser?.id
+        row.innerHTML = `
+          <div class="user-avatar">${u.username.charAt(0).toUpperCase()}</div>
+          <div class="user-info">
+            <div class="user-name">${escapeAttr(u.username)}${isSelf ? ' <span class="user-self">(вы)</span>' : ''}</div>
+            <div class="user-role">${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</div>
+          </div>
+          ${!isSelf ? `<button class="user-delete" data-id="${u.id}" title="Удалить">✕</button>` : ''}
+        `
+        row.querySelector<HTMLButtonElement>('.user-delete')?.addEventListener('click', async () => {
           if (!confirm(`Удалить пользователя ${u.username}?`)) return
           try { await deleteUser(u.id); await loadAndRenderList() } catch (e) { alert(e instanceof Error ? e.message : 'Ошибка') }
         })
@@ -220,7 +249,21 @@ async function renderUsers() {
 }
 
 function renderNotifications() {
-  contentRoot.innerHTML = `<section class="notifications-panel"><div id="notify-list" class="notify-list"></div></section>`
+  contentRoot.innerHTML = `<section class="notifications-panel">
+    <div class="page-header-row">
+      <div><h2>Уведомления</h2><p class="page-subtitle">Всего: ${notifications.length}</p></div>
+      ${notifications.length > 0 ? '<button id="clear-notifications" class="btn-secondary">Очистить все</button>' : ''}
+    </div>
+    <div id="notify-list" class="notify-list"></div>
+  </section>`
+  const clearBtn = document.querySelector<HTMLButtonElement>('#clear-notifications')
+  if (clearBtn) clearBtn.onclick = () => {
+    if (!confirm('Очистить все уведомления?')) return
+    notifications = []
+    saveNotifications()
+    updateNotificationBadge()
+    renderNotifications()
+  }
   const list = document.querySelector<HTMLDivElement>('#notify-list')!
   if (notifications.length === 0) { list.innerHTML = '<p class="hint">Уведомлений пока нет.</p>'; return }
   for (const n of notifications) {
@@ -244,15 +287,30 @@ function renderConversations() {
 }
 
 function renderChat() {
-  contentRoot.innerHTML = `<div id="messages" class="messages"></div>
-  <form id="composer-form" class="composer">
-    <div class="composer-shell">
-      <label class="attach-button">+<input id="file-input" type="file" /></label>
-      <textarea id="prompt-input" placeholder="Сообщение..." rows="1"></textarea>
-      <button id="send-button" type="submit" class="send-icon">➤</button>
+  const modelOptions = DEFAULT_MODELS.map((m) => `<option value="${m}"${selectedModel === m ? ' selected' : ''}>${m}</option>`).join('')
+  contentRoot.innerHTML = `<div class="chat-wrap">
+    <div id="messages" class="messages"></div>
+    <div class="composer-area">
+      <form id="composer-form" class="composer">
+        <div class="composer-shell">
+          <label class="attach-button" title="Прикрепить файл">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <input id="file-input" type="file" />
+          </label>
+          <textarea id="prompt-input" placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)" rows="1"></textarea>
+          <button id="send-button" type="submit" class="send-icon" title="Отправить">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="composer-footer">
+          <select id="model-select" class="model-select">${modelOptions}</select>
+          <span id="file-name" class="file-name"></span>
+        </div>
+      </form>
     </div>
-    <span id="file-name" class="file-name">Файл не выбран</span>
-  </form>`
+  </div>`
+  modelSelect = document.querySelector<HTMLSelectElement>('#model-select')!
+  modelSelect.addEventListener('change', () => { selectedModel = modelSelect!.value; localStorage.setItem('aiassist.model.v1', selectedModel) })
   const messagesEl = document.querySelector<HTMLDivElement>('#messages')!
   const current = getActiveConversation()
   if (!current || current.messages.length === 0) messagesEl.innerHTML = '<p class="hint">Начни диалог с моделью.</p>'
@@ -271,7 +329,22 @@ function renderChat() {
 
   const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
   const fileNameNode = document.querySelector<HTMLSpanElement>('#file-name')!
-  fileInput.onchange = () => { fileNameNode.textContent = fileInput.files?.[0]?.name ?? 'Файл не выбран' }
+  const promptTextarea = document.querySelector<HTMLTextAreaElement>('#prompt-input')!
+  const formEl = document.querySelector<HTMLFormElement>('#composer-form')!
+  fileInput.onchange = () => {
+    const name = fileInput.files?.[0]?.name
+    fileNameNode.textContent = name ? `📎 ${name}` : ''
+  }
+  promptTextarea.addEventListener('input', () => {
+    promptTextarea.style.height = 'auto'
+    promptTextarea.style.height = Math.min(promptTextarea.scrollHeight, 200) + 'px'
+  })
+  promptTextarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      formEl.requestSubmit()
+    }
+  })
   document.querySelector<HTMLFormElement>('#composer-form')!.onsubmit = async (event) => {
     event.preventDefault()
     const promptInput = document.querySelector<HTMLTextAreaElement>('#prompt-input')!
@@ -293,12 +366,12 @@ function renderChat() {
     persistAndRender()
     try {
       const reply = await requestOpenRouterCompletion({
-        model: modelSelect.value,
+        model: getCurrentModel(),
         messages: currentConversation.messages,
         imageDataUrl,
         systemPrompt: buildDocumentSystemPrompt()
       })
-      currentConversation.messages.push({ id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: modelSelect.value })
+      currentConversation.messages.push({ id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: getCurrentModel() })
     } catch (error) {
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: `Ошибка: ${error instanceof Error ? error.message : 'Unknown error'}`, createdAt: Date.now() })
     }
@@ -311,30 +384,52 @@ function renderChat() {
 
 function renderDocuments() {
   contentRoot.innerHTML = `<section class="documents">
-    <div class="docs-actions">
-      <input id="doc-search" placeholder="Поиск по названию и полям" />
-      <button id="doc-search-btn">Найти</button>
+    <div class="page-header">
+      <h2>Добавить документ</h2>
+      <p class="page-subtitle">Загрузите фото — поля заполнятся автоматически. Или внесите данные вручную.</p>
     </div>
     <form id="doc-form" class="doc-form">
-      <input id="doc-title" placeholder="Название документа" required />
-      <input id="doc-type" placeholder="Тип документа" required />
-      <div class="fields-editor">
-        <div id="fields-list" class="fields-list"></div>
-        <button id="add-field-btn" type="button" class="add-field-btn">+ Добавить поле</button>
+      <div class="form-section">
+        <label class="form-label">Фото документа</label>
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-zone-icon">📷</div>
+          <div id="drop-label" class="drop-zone-text">Перетащите фото сюда или нажмите для выбора</div>
+          <input id="doc-image" type="file" accept="image/*" />
+        </div>
+        <button id="doc-extract" type="button" class="btn-secondary">✨ Распознать поля с фото</button>
       </div>
-      <input id="doc-expires" type="date" />
-      <label class="checkbox-label"><input id="doc-notify" type="checkbox" checked /> Уведомлять об окончании срока</label>
-      <label class="notify-days-label">За сколько дней уведомить: <input id="doc-notify-days" type="number" min="0" value="1" style="width:70px" /></label>
-      <div id="drop-zone" class="drop-zone">
-        <span id="drop-label">Перетащите фото сюда или нажмите для выбора</span>
-        <input id="doc-image" type="file" accept="image/*" />
+
+      <div class="form-section">
+        <label class="form-label">Основная информация</label>
+        <div class="form-row">
+          <input id="doc-title" placeholder="Название документа" required />
+          <input id="doc-type" placeholder="Тип (паспорт, ИНН, договор...)" required />
+        </div>
       </div>
-      <div class="docs-actions">
-        <button id="doc-extract" type="button">Распознать поля с фото</button>
-        <button type="submit">Сохранить документ</button>
+
+      <div class="form-section">
+        <label class="form-label">Поля документа</label>
+        <div class="fields-editor">
+          <div id="fields-list" class="fields-list"></div>
+          <button id="add-field-btn" type="button" class="add-field-btn">+ Добавить поле</button>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <label class="form-label">Срок действия и напоминание</label>
+        <div class="form-row">
+          <input id="doc-expires" type="date" />
+          <div class="notify-controls">
+            <label class="checkbox-label"><input id="doc-notify" type="checkbox" checked /> Уведомлять</label>
+            <label class="notify-days-label">за <input id="doc-notify-days" type="number" min="0" value="1" /> дней</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Сохранить документ</button>
       </div>
     </form>
-    <div id="docs-list" class="docs-list"></div>
   </section>`
 
   renderFieldsList([])
@@ -342,17 +437,13 @@ function renderDocuments() {
   document.querySelector<HTMLButtonElement>('#add-field-btn')!.onclick = () => {
     addFieldRow()
   }
-  document.querySelector<HTMLButtonElement>('#doc-search-btn')!.onclick = async () => {
-    documents = await listDocuments((document.querySelector<HTMLInputElement>('#doc-search')?.value ?? '').trim())
-    renderDocumentsList()
-  }
   const docImageInput = document.querySelector<HTMLInputElement>('#doc-image')!
   const dropZone = document.querySelector<HTMLDivElement>('#drop-zone')!
-  const dropLabel = document.querySelector<HTMLSpanElement>('#drop-label')!
+  const dropLabel = document.querySelector<HTMLDivElement>('#drop-label')!
 
   async function handleImageFile(file: File | undefined) {
     docImageDataUrl = await getImageDataUrl(file)
-    if (file && docImageDataUrl) dropLabel.textContent = `Фото: ${file.name}`
+    if (file && docImageDataUrl) dropLabel.innerHTML = `✓ Фото выбрано: <strong>${file.name}</strong>`
   }
 
   docImageInput.onchange = (e) => handleImageFile((e.target as HTMLInputElement).files?.[0])
@@ -369,7 +460,7 @@ function renderDocuments() {
   document.querySelector<HTMLButtonElement>('#doc-extract')!.onclick = async () => {
     if (!docImageDataUrl) { alert('Сначала выберите фото документа'); return }
     const btn = document.querySelector<HTMLButtonElement>('#doc-extract')!
-    const extractModel = VISION_MODELS.includes(modelSelect.value) ? modelSelect.value : VISION_MODELS[0]
+    const extractModel = VISION_MODELS.includes(getCurrentModel()) ? getCurrentModel() : VISION_MODELS[0]
     btn.textContent = 'Распознаю...'
     btn.disabled = true
     try {
@@ -405,11 +496,14 @@ function renderDocuments() {
 
 function renderBase() {
   contentRoot.innerHTML = `<section class="documents">
-    <div class="docs-actions">
-      <input id="base-search" placeholder="Поиск по названию и полям" />
-      <button id="base-search-btn">Найти</button>
+    <div class="page-header-row">
+      <div><h2>База документов</h2><p class="page-subtitle">Всего: ${documents.length}</p></div>
     </div>
-    <div id="base-list" class="docs-list"></div>
+    <div class="search-bar">
+      <input id="base-search" placeholder="🔍 Поиск по названию, типу, полям..." />
+      <button id="base-search-btn" class="btn-secondary">Найти</button>
+    </div>
+    <div id="base-list" class="docs-grid"></div>
   </section>`
   renderBaseList(documents)
   document.querySelector<HTMLButtonElement>('#base-search-btn')!.onclick = async () => {
@@ -485,27 +579,41 @@ function escapeAttr(s: string) {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function renderDocumentsList() {
-  const list = document.querySelector<HTMLDivElement>('#docs-list')
-  if (!list) return
-  list.innerHTML = documents.map((d) => `<article class="doc-card"><h3>${d.title}</h3><p>${d.docType}</p><p>Срок: ${d.expiresAt ?? 'не указан'}</p><pre>${JSON.stringify(d.fields, null, 2)}</pre></article>`).join('') || '<p class="hint">Документы не найдены</p>'
+function renderTodos() {
+  const active = todos.filter((t) => !t.done)
+  const done = todos.filter((t) => t.done)
+  contentRoot.innerHTML = `<section class="todos">
+    <div class="page-header-row">
+      <div><h2>Список дел</h2><p class="page-subtitle">Активных: ${active.length}${done.length > 0 ? ` · Выполнено: ${done.length}` : ''}</p></div>
+      <button id="refresh-reminders" class="btn-secondary">🔄 Обновить</button>
+    </div>
+    ${active.length > 0 ? '<div class="todos-section-label">Активные</div>' : ''}
+    <div id="todo-list-active"></div>
+    ${done.length > 0 ? '<div class="todos-section-label">Выполненные</div>' : ''}
+    <div id="todo-list-done"></div>
+  </section>`
+  document.querySelector<HTMLButtonElement>('#refresh-reminders')!.addEventListener('click', () => runRemindersAndNotify())
+  if (todos.length === 0) {
+    document.querySelector<HTMLDivElement>('#todo-list-active')!.innerHTML = '<p class="hint">Дел пока нет. Добавьте документ со сроком — и система напомнит о нём.</p>'
+    return
+  }
+  const renderList = (list: HTMLElement, items: TodoItem[]) => {
+    for (const todo of items) renderTodoRow(list, todo)
+  }
+  renderList(document.querySelector<HTMLDivElement>('#todo-list-active')!, active)
+  renderList(document.querySelector<HTMLDivElement>('#todo-list-done')!, done)
 }
 
-function renderTodos() {
-  contentRoot.innerHTML = `<section class="todos"><div id="todo-list"></div></section>`
-  const list = document.querySelector<HTMLDivElement>('#todo-list')!
-  if (todos.length === 0) { list.innerHTML = '<p class="hint">Дел пока нет.</p>'; return }
-  for (const todo of todos) {
-    const row = document.createElement('label')
-    row.className = 'todo-row'
-    row.innerHTML = `<input type="checkbox" ${todo.done ? 'checked' : ''}/><span>${todo.text} (${todo.dueDate})</span>`
-    row.querySelector('input')!.addEventListener('change', async (e) => {
-      await setTodoDone(todo.id, (e.target as HTMLInputElement).checked)
-      await refreshData()
-      renderTodos()
-    })
-    list.appendChild(row)
-  }
+function renderTodoRow(list: HTMLElement, todo: TodoItem) {
+  const row = document.createElement('label')
+  row.className = `todo-row${todo.done ? ' done' : ''}`
+  row.innerHTML = `<input type="checkbox" ${todo.done ? 'checked' : ''}/><div class="todo-body"><div class="todo-text">${escapeAttr(todo.text)}</div><div class="todo-date">до ${todo.dueDate}</div></div>`
+  row.querySelector('input')!.addEventListener('change', async (e) => {
+    await setTodoDone(todo.id, (e.target as HTMLInputElement).checked)
+    await refreshData()
+    renderTodos()
+  })
+  list.appendChild(row)
 }
 
 async function refreshData() {
