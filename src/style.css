@@ -346,6 +346,41 @@ button {
   border: 1px solid var(--line);
 }
 
+.drop-zone {
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  transition: border-color 0.2s, background 0.2s;
+  position: relative;
+}
+
+.drop-zone input[type="file"] {
+  display: none;
+}
+
+.drop-zone:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: #1a2535;
+  color: var(--accent);
+}
+
+.message-image {
+  cursor: zoom-in;
+}
+
+.doc-image {
+  cursor: zoom-in;
+}
+
 .fields-editor {
   display: flex;
   flex-direction: column;

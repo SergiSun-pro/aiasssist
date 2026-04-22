@@ -98,7 +98,11 @@ function renderChat() {
   else for (const m of current.messages) {
     const item = document.createElement('article')
     item.className = `message ${m.role}`
-    item.innerHTML = `<div class="message-meta">${m.role === 'user' ? 'Ты' : `ИИ${m.model ? ` (${m.model})` : ''}`}</div>${m.displayImage ? `<img class="message-image" src="${m.displayImage}" alt="Фото документа" />` : ''}<pre class="message-content"></pre>`
+    item.innerHTML = `<div class="message-meta">${m.role === 'user' ? 'Ты' : `ИИ${m.model ? ` (${m.model})` : ''}`}</div>${m.displayImage ? `<img class="message-image" src="${m.displayImage}" alt="Фото документа" title="Нажмите для просмотра" />` : ''}<pre class="message-content"></pre>`
+    if (m.displayImage) {
+      const img = item.querySelector<HTMLImageElement>('.message-image')!
+      img.onclick = () => openImageFullscreen(m.displayImage!)
+    }
     item.querySelector('pre')!.textContent = m.content
     messagesEl.appendChild(item)
   }
@@ -160,7 +164,10 @@ function renderDocuments() {
       <input id="doc-expires" type="date" />
       <label class="checkbox-label"><input id="doc-notify" type="checkbox" checked /> Уведомлять об окончании срока</label>
       <label class="notify-days-label">За сколько дней уведомить: <input id="doc-notify-days" type="number" min="0" value="1" style="width:70px" /></label>
-      <label class="file-button">Фото документа<input id="doc-image" type="file" accept="image/*" /></label>
+      <div id="drop-zone" class="drop-zone">
+        <span id="drop-label">Перетащите фото сюда или нажмите для выбора</span>
+        <input id="doc-image" type="file" accept="image/*" />
+      </div>
       <div class="docs-actions">
         <button id="doc-extract" type="button">Распознать поля с фото</button>
         <button type="submit">Сохранить документ</button>
@@ -178,10 +185,26 @@ function renderDocuments() {
     documents = await listDocuments((document.querySelector<HTMLInputElement>('#doc-search')?.value ?? '').trim())
     renderDocumentsList()
   }
-  document.querySelector<HTMLInputElement>('#doc-image')!.onchange = async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0]
+  const docImageInput = document.querySelector<HTMLInputElement>('#doc-image')!
+  const dropZone = document.querySelector<HTMLDivElement>('#drop-zone')!
+  const dropLabel = document.querySelector<HTMLSpanElement>('#drop-label')!
+
+  async function handleImageFile(file: File | undefined) {
     docImageDataUrl = await getImageDataUrl(file)
+    if (file && docImageDataUrl) dropLabel.textContent = `Фото: ${file.name}`
   }
+
+  docImageInput.onchange = (e) => handleImageFile((e.target as HTMLInputElement).files?.[0])
+
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over') })
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault()
+    dropZone.classList.remove('drag-over')
+    const file = e.dataTransfer?.files?.[0]
+    if (file?.type.startsWith('image/')) await handleImageFile(file)
+  })
+  dropZone.addEventListener('click', () => docImageInput.click())
   document.querySelector<HTMLButtonElement>('#doc-extract')!.onclick = async () => {
     if (!docImageDataUrl) { alert('Сначала выберите фото документа'); return }
     const btn = document.querySelector<HTMLButtonElement>('#doc-extract')!
@@ -260,8 +283,12 @@ function renderBaseList(docs: DocumentRecord[]) {
         ${d.expiresAt ? `<span class="doc-expires">до ${d.expiresAt}</span>` : ''}
       </div>
       ${fields ? `<div class="doc-fields">${fields}</div>` : ''}
-      ${d.imageDataUrl ? `<img class="doc-image" src="${d.imageDataUrl}" alt="Фото документа" />` : ''}
+      ${d.imageDataUrl ? `<img class="doc-image" src="${d.imageDataUrl}" alt="Фото документа" title="Нажмите для просмотра" />` : ''}
     `
+    if (d.imageDataUrl) {
+      const img = card.querySelector<HTMLImageElement>('.doc-image')!
+      img.onclick = () => openImageFullscreen(d.imageDataUrl!)
+    }
     list.appendChild(card)
   }
 }
@@ -340,6 +367,13 @@ function persist() { repository.save(state) }
 function createId() { return `${Date.now()}-${Math.random().toString(16).slice(2)}` }
 async function getFilePreview(file: File) { return file.type.startsWith('text/') ? `[Содержимое файла]:\n${(await file.text()).slice(0, 4000)}` : '[Бинарный файл]' }
 async function getImageDataUrl(file: File | undefined) { if (!file?.type.startsWith('image/')) return undefined; return new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.readAsDataURL(file) }) }
+
+function openImageFullscreen(src: string) {
+  const win = window.open('', '_blank')
+  if (!win) return
+  win.document.write(`<!DOCTYPE html><html><head><title>Фото документа</title><style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;}img{max-width:100%;max-height:100vh;object-fit:contain;}</style></head><body><img src="${src}" /></body></html>`)
+  win.document.close()
+}
 
 function buildDocumentSystemPrompt(): string {
   if (documents.length === 0 && todos.length === 0) return 'Ты персональный ассистент. Документов пока нет.'
