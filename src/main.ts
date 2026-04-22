@@ -12,7 +12,7 @@ const initialState = repository.load()
 const state: AppState = { conversations: initialState.conversations, activeConversationId: initialState.activeConversationId }
 let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
-let activeTab: 'chat' | 'documents' | 'todos' = 'chat'
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' = 'chat'
 let docImageDataUrl: string | undefined
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout">
@@ -23,6 +23,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout
     <nav class="tabs">
       <button id="tab-chat" class="tab active">Чат</button>
       <button id="tab-docs" class="tab">Документы</button>
+      <button id="tab-base" class="tab">База</button>
       <button id="tab-todos" class="tab">Дела</button>
     </nav>
   </aside>
@@ -45,6 +46,7 @@ if (!state.activeConversationId) createConversation('Новая беседа')
 document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener('click', () => { createConversation('Новая беседа'); render() })
 document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click', () => setTab('chat'))
 document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
+document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
 document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
 document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
 
@@ -53,10 +55,11 @@ requestNotificationPermission()
 runRemindersAndNotify()
 setInterval(runRemindersAndNotify, 30 * 60 * 1000)
 
-function setTab(tab: 'chat' | 'documents' | 'todos') {
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base') {
   activeTab = tab
   document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'))
-  document.querySelector(`#tab-${tab === 'documents' ? 'docs' : tab}`)?.classList.add('active')
+  const tabId = tab === 'documents' ? 'docs' : tab
+  document.querySelector(`#tab-${tabId}`)?.classList.add('active')
   render()
 }
 
@@ -64,6 +67,7 @@ function render() {
   renderConversations()
   if (activeTab === 'chat') renderChat()
   if (activeTab === 'documents') renderDocuments()
+  if (activeTab === 'base') renderBase()
   if (activeTab === 'todos') renderTodos()
 }
 
@@ -213,7 +217,53 @@ function renderDocuments() {
     await refreshData()
     renderDocuments()
   }
-  renderDocumentsList()
+}
+
+function renderBase() {
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="docs-actions">
+      <input id="base-search" placeholder="Поиск по названию и полям" />
+      <button id="base-search-btn">Найти</button>
+    </div>
+    <div id="base-list" class="docs-list"></div>
+  </section>`
+  renderBaseList(documents)
+  document.querySelector<HTMLButtonElement>('#base-search-btn')!.onclick = async () => {
+    const q = (document.querySelector<HTMLInputElement>('#base-search')?.value ?? '').trim()
+    const results = await listDocuments(q)
+    renderBaseList(results)
+  }
+  document.querySelector<HTMLInputElement>('#base-search')!.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const q = (e.target as HTMLInputElement).value.trim()
+      const results = await listDocuments(q)
+      renderBaseList(results)
+    }
+  })
+}
+
+function renderBaseList(docs: DocumentRecord[]) {
+  const list = document.querySelector<HTMLDivElement>('#base-list')
+  if (!list) return
+  if (docs.length === 0) { list.innerHTML = '<p class="hint">Документы не найдены</p>'; return }
+  list.innerHTML = ''
+  for (const d of docs) {
+    const card = document.createElement('article')
+    card.className = 'doc-card'
+    const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `<div class="doc-field"><span class="doc-field-key">${escapeAttr(k)}</span><span class="doc-field-val">${escapeAttr(String(v))}</span></div>`).join('')
+    card.innerHTML = `
+      <div class="doc-card-header">
+        <div>
+          <h3>${escapeAttr(d.title)}</h3>
+          <p class="doc-type">${escapeAttr(d.docType)}</p>
+        </div>
+        ${d.expiresAt ? `<span class="doc-expires">до ${d.expiresAt}</span>` : ''}
+      </div>
+      ${fields ? `<div class="doc-fields">${fields}</div>` : ''}
+      ${d.imageDataUrl ? `<img class="doc-image" src="${d.imageDataUrl}" alt="Фото документа" />` : ''}
+    `
+    list.appendChild(card)
+  }
 }
 
 function renderFieldsList(entries: [string, string][]) {
