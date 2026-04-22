@@ -7,6 +7,7 @@ export interface ChatMessage {
   createdAt: number
   model?: string
   attachmentName?: string
+  displayImage?: string
 }
 
 export interface Conversation {

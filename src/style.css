@@ -155,6 +155,15 @@ button {
   margin-bottom: 6px;
 }
 
+.message-image {
+  display: block;
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  object-fit: contain;
+}
+
 .message-content {
   margin: 0;
   white-space: pre-wrap;
@@ -275,6 +284,57 @@ button {
   border-radius: 10px;
   padding: 10px;
   background: #141820;
+}
+
+.fields-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.field-remove {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.field-remove:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.add-field-btn {
+  width: fit-content;
+  font-size: 13px;
+  color: var(--accent);
+  border-color: var(--accent);
+  padding: 6px 12px;
+}
+
+.checkbox-label,
+.notify-days-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
 }
 
 .todo-row {

@@ -4,6 +4,7 @@ export interface OpenRouterRequest {
   model: string
   messages: ChatMessage[]
   imageDataUrl?: string
+  systemPrompt?: string
 }
 
 interface ProxyResponse {
@@ -14,27 +15,31 @@ interface ProxyResponse {
 export async function requestOpenRouterCompletion({
   model,
   messages,
-  imageDataUrl
+  imageDataUrl,
+  systemPrompt
 }: OpenRouterRequest): Promise<string> {
-  const payloadMessages = messages.map((message, index) => {
+  const payloadMessages: unknown[] = []
+
+  if (systemPrompt) {
+    payloadMessages.push({ role: 'system', content: systemPrompt })
+  }
+
+  for (const [index, message] of messages.entries()) {
     const isLastMessage = index === messages.length - 1
     const canAttachImage = isLastMessage && message.role === 'user' && imageDataUrl
 
-    if (!canAttachImage) {
-      return {
+    if (canAttachImage) {
+      payloadMessages.push({
         role: message.role,
-        content: message.content
-      }
+        content: [
+          { type: 'text', text: message.content },
+          { type: 'image_url', image_url: { url: imageDataUrl } }
+        ]
+      })
+    } else {
+      payloadMessages.push({ role: message.role, content: message.content })
     }
-
-    return {
-      role: message.role,
-      content: [
-        { type: 'text', text: message.content },
-        { type: 'image_url', image_url: { url: imageDataUrl } }
-      ]
-    }
-  })
+  }
 
   const response = await fetch('/api/chat', {
     method: 'POST',

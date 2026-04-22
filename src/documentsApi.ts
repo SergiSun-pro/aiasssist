@@ -24,6 +24,11 @@ export async function listDocuments(query = ''): Promise<DocumentRecord[]> {
   return parseResponse<{ documents: DocumentRecord[] }>(response).then((v) => v.documents)
 }
 
+export async function getDocument(id: string): Promise<DocumentRecord> {
+  const response = await fetch(`/api/documents/${encodeURIComponent(id)}`)
+  return parseResponse<{ document: DocumentRecord }>(response).then((v) => v.document)
+}
+
 export async function createDocument(payload: CreateDocumentInput): Promise<DocumentRecord> {
   const response = await fetch('/api/documents', {
     method: 'POST',
@@ -33,9 +38,10 @@ export async function createDocument(payload: CreateDocumentInput): Promise<Docu
   return parseResponse<{ document: DocumentRecord }>(response).then((v) => v.document)
 }
 
-export async function runReminders(): Promise<void> {
+export async function runReminders(): Promise<TodoItem[]> {
   const response = await fetch('/api/reminders/run', { method: 'POST' })
-  await parseResponse<{ ok: true }>(response)
+  const data = await parseResponse<{ ok: true; newTodos: TodoItem[] }>(response)
+  return data.newTodos ?? []
 }
 
 export async function listTodos(): Promise<TodoItem[]> {

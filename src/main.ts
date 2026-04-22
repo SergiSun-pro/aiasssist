@@ -45,9 +45,12 @@ document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener(
 document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click', () => setTab('chat'))
 document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
 document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
-document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', async () => { await runReminders(); await refreshData(); if (activeTab === 'todos') renderTodos() })
+document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
 
 refreshData().finally(render)
+requestNotificationPermission()
+runRemindersAndNotify()
+setInterval(runRemindersAndNotify, 30 * 60 * 1000)
 
 function setTab(tab: 'chat' | 'documents' | 'todos') {
   activeTab = tab
@@ -90,7 +93,7 @@ function renderChat() {
   else for (const m of current.messages) {
     const item = document.createElement('article')
     item.className = `message ${m.role}`
-    item.innerHTML = `<div class="message-meta">${m.role === 'user' ? 'Ты' : `ИИ${m.model ? ` (${m.model})` : ''}`}</div><pre class="message-content"></pre>`
+    item.innerHTML = `<div class="message-meta">${m.role === 'user' ? 'Ты' : `ИИ${m.model ? ` (${m.model})` : ''}`}</div>${m.displayImage ? `<img class="message-image" src="${m.displayImage}" alt="Фото документа" />` : ''}<pre class="message-content"></pre>`
     item.querySelector('pre')!.textContent = m.content
     messagesEl.appendChild(item)
   }
@@ -117,11 +120,13 @@ function renderChat() {
     if (currentConversation.title === 'Новая беседа') currentConversation.title = text.slice(0, 40)
     persistAndRender()
     try {
-      const docsContext = documents.slice(0, 5).map((d) => `${d.title} (${d.docType})`).join(', ')
+      if (!imageDataUrl) imageDataUrl = findDocumentImage(text)
+      if (imageDataUrl) userMessage.displayImage = imageDataUrl
       const reply = await requestOpenRouterCompletion({
         model: modelSelect.value,
-        messages: [...currentConversation.messages, { id: createId(), role: 'user', content: `Контекст документов: ${docsContext || 'нет'}`, createdAt: Date.now() }],
-        imageDataUrl
+        messages: currentConversation.messages,
+        imageDataUrl,
+        systemPrompt: buildDocumentSystemPrompt()
       })
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: modelSelect.value })
     } catch (error) {
@@ -143,18 +148,27 @@ function renderDocuments() {
     <form id="doc-form" class="doc-form">
       <input id="doc-title" placeholder="Название документа" required />
       <input id="doc-type" placeholder="Тип документа" required />
-      <textarea id="doc-fields" placeholder='Поля JSON, например {"номер":"123"}'></textarea>
+      <div class="fields-editor">
+        <div id="fields-list" class="fields-list"></div>
+        <button id="add-field-btn" type="button" class="add-field-btn">+ Добавить поле</button>
+      </div>
       <input id="doc-expires" type="date" />
-      <label><input id="doc-notify" type="checkbox" checked /> Уведомлять об окончании</label>
-      <input id="doc-notify-days" type="number" min="0" value="1" />
+      <label class="checkbox-label"><input id="doc-notify" type="checkbox" checked /> Уведомлять об окончании срока</label>
+      <label class="notify-days-label">За сколько дней уведомить: <input id="doc-notify-days" type="number" min="0" value="1" style="width:70px" /></label>
       <label class="file-button">Фото документа<input id="doc-image" type="file" accept="image/*" /></label>
       <div class="docs-actions">
-        <button id="doc-extract" type="button">Распознать поля</button>
+        <button id="doc-extract" type="button">Распознать поля с фото</button>
         <button type="submit">Сохранить документ</button>
       </div>
     </form>
     <div id="docs-list" class="docs-list"></div>
   </section>`
+
+  renderFieldsList([])
+
+  document.querySelector<HTMLButtonElement>('#add-field-btn')!.onclick = () => {
+    addFieldRow()
+  }
   document.querySelector<HTMLButtonElement>('#doc-search-btn')!.onclick = async () => {
     documents = await listDocuments((document.querySelector<HTMLInputElement>('#doc-search')?.value ?? '').trim())
     renderDocumentsList()
@@ -164,17 +178,24 @@ function renderDocuments() {
     docImageDataUrl = await getImageDataUrl(file)
   }
   document.querySelector<HTMLButtonElement>('#doc-extract')!.onclick = async () => {
-    if (!docImageDataUrl) return
-    const parsed = await extractDocument(docImageDataUrl, modelSelect.value)
-    ;(document.querySelector<HTMLInputElement>('#doc-title')!).value = parsed.title
-    ;(document.querySelector<HTMLInputElement>('#doc-type')!).value = parsed.docType
-    ;(document.querySelector<HTMLTextAreaElement>('#doc-fields')!).value = JSON.stringify(parsed.fields, null, 2)
-    ;(document.querySelector<HTMLInputElement>('#doc-expires')!).value = parsed.expiresAt ?? ''
+    if (!docImageDataUrl) { alert('Сначала выберите фото документа'); return }
+    const btn = document.querySelector<HTMLButtonElement>('#doc-extract')!
+    btn.textContent = 'Распознаю...'
+    btn.disabled = true
+    try {
+      const parsed = await extractDocument(docImageDataUrl, modelSelect.value)
+      ;(document.querySelector<HTMLInputElement>('#doc-title')!).value = parsed.title
+      ;(document.querySelector<HTMLInputElement>('#doc-type')!).value = parsed.docType
+      ;(document.querySelector<HTMLInputElement>('#doc-expires')!).value = parsed.expiresAt ?? ''
+      renderFieldsList(Object.entries(parsed.fields))
+    } finally {
+      btn.textContent = 'Распознать поля с фото'
+      btn.disabled = false
+    }
   }
   document.querySelector<HTMLFormElement>('#doc-form')!.onsubmit = async (event) => {
     event.preventDefault()
-    const fieldsRaw = document.querySelector<HTMLTextAreaElement>('#doc-fields')!.value.trim()
-    const fields = fieldsRaw ? JSON.parse(fieldsRaw) : {}
+    const fields = collectFields()
     await createDocument({
       title: document.querySelector<HTMLInputElement>('#doc-title')!.value.trim(),
       docType: document.querySelector<HTMLInputElement>('#doc-type')!.value.trim(),
@@ -184,10 +205,42 @@ function renderDocuments() {
       notifyBeforeDays: Number(document.querySelector<HTMLInputElement>('#doc-notify-days')!.value || '1'),
       expiresAt: document.querySelector<HTMLInputElement>('#doc-expires')!.value || undefined
     })
+    docImageDataUrl = undefined
     await refreshData()
     renderDocuments()
   }
   renderDocumentsList()
+}
+
+function renderFieldsList(entries: [string, string][]) {
+  const list = document.querySelector<HTMLDivElement>('#fields-list')!
+  list.innerHTML = ''
+  if (entries.length === 0) { addFieldRow(); return }
+  for (const [key, value] of entries) addFieldRow(key, String(value))
+}
+
+function addFieldRow(key = '', value = '') {
+  const list = document.querySelector<HTMLDivElement>('#fields-list')
+  if (!list) return
+  const row = document.createElement('div')
+  row.className = 'field-row'
+  row.innerHTML = `<input class="field-key" placeholder="Название поля" value="${escapeAttr(key)}" /><input class="field-value" placeholder="Значение" value="${escapeAttr(value)}" /><button type="button" class="field-remove" title="Удалить">✕</button>`
+  row.querySelector<HTMLButtonElement>('.field-remove')!.onclick = () => row.remove()
+  list.appendChild(row)
+}
+
+function collectFields(): Record<string, string> {
+  const result: Record<string, string> = {}
+  document.querySelectorAll<HTMLDivElement>('.field-row').forEach((row) => {
+    const key = row.querySelector<HTMLInputElement>('.field-key')!.value.trim()
+    const value = row.querySelector<HTMLInputElement>('.field-value')!.value.trim()
+    if (key) result[key] = value
+  })
+  return result
+}
+
+function escapeAttr(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function renderDocumentsList() {
@@ -234,4 +287,53 @@ function createId() { return `${Date.now()}-${Math.random().toString(16).slice(2
 async function getFilePreview(file: File) { return file.type.startsWith('text/') ? `[Содержимое файла]:\n${(await file.text()).slice(0, 4000)}` : '[Бинарный файл]' }
 async function getImageDataUrl(file: File | undefined) { if (!file?.type.startsWith('image/')) return undefined; return new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.readAsDataURL(file) }) }
 
+function buildDocumentSystemPrompt(): string {
+  if (documents.length === 0 && todos.length === 0) return 'Ты персональный ассистент. Документов пока нет.'
+  const docLines = documents.map((d) => {
+    const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `    ${k}: ${v}`).join('\n')
+    return [
+      `- ${d.title} (${d.docType})`,
+      d.expiresAt ? `  Срок действия: ${d.expiresAt}` : '',
+      d.notifyEnabled ? `  Уведомление: за ${d.notifyBeforeDays} дн.` : '',
+      fields ? `  Поля:\n${fields}` : '',
+      d.imageDataUrl ? '  Фото: есть' : ''
+    ].filter(Boolean).join('\n')
+  }).join('\n\n')
+  const todoLines = todos.filter((t) => !t.done).map((t) => `- ${t.text} (до ${t.dueDate})`).join('\n')
+  return [
+    'Ты персональный ассистент. У пользователя есть следующие документы:',
+    docLines || 'нет',
+    todoLines ? `\nАктивные напоминания:\n${todoLines}` : ''
+  ].filter(Boolean).join('\n\n')
+}
+
+function findDocumentImage(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  for (const doc of documents) {
+    if (doc.imageDataUrl && lower.includes(doc.title.toLowerCase())) return doc.imageDataUrl
+  }
+  return undefined
+}
+
 if ('serviceWorker' in navigator) window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}) })
+
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission()
+  }
+}
+
+async function runRemindersAndNotify() {
+  try {
+    const newTodos = await runReminders()
+    await refreshData()
+    if (activeTab === 'todos') renderTodos()
+    if (newTodos.length > 0 && 'Notification' in window && Notification.permission === 'granted') {
+      for (const todo of newTodos) {
+        new Notification('Напоминание', { body: todo.text, icon: '/pwa-icon.svg' })
+      }
+    }
+  } catch {
+    // сеть недоступна — игнорируем
+  }
+}

@@ -127,6 +127,13 @@ app.get('/api/documents', async (req, res) => {
   res.json({ documents: filtered })
 })
 
+app.get('/api/documents/:id', async (req, res) => {
+  const db = await readDb()
+  const doc = db.documents.find((d) => d.id === req.params.id)
+  if (!doc) { res.status(404).json({ error: 'Документ не найден' }); return }
+  res.json({ document: doc })
+})
+
 app.post('/api/documents', async (req, res) => {
   const { title, docType, fields, imageDataUrl, notifyEnabled, notifyBeforeDays, expiresAt } = req.body ?? {}
   if (!title || !docType) {
@@ -173,6 +180,7 @@ app.post('/api/reminders/run', async (_req, res) => {
   const db = await readDb()
   const today = new Date()
   const todayIso = today.toISOString().slice(0, 10)
+  const newTodos = []
 
   for (const document of db.documents) {
     if (!document.notifyEnabled || !document.expiresAt) continue
@@ -186,14 +194,16 @@ app.post('/api/reminders/run', async (_req, res) => {
       (todo) => todo.documentId === document.id && todo.text.includes(document.title) && !todo.done
     )
     if (!exists) {
-      db.todos.unshift({
+      const todo = {
         id: createId(),
         documentId: document.id,
         text: `Проверь окончание документа: ${document.title}`,
         dueDate: todayIso,
         done: false,
         createdAt: Date.now()
-      })
+      }
+      db.todos.unshift(todo)
+      newTodos.push(todo)
     }
   }
 
@@ -207,7 +217,7 @@ app.post('/api/reminders/run', async (_req, res) => {
   }
 
   await writeDb(db)
-  res.json({ ok: true })
+  res.json({ ok: true, newTodos })
 })
 
 app.post('/api/documents/extract', async (req, res) => {
