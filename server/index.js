@@ -3,6 +3,8 @@ import express from 'express'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { verifyToken, createToken, hashPassword, verifyPassword } from './auth.js'
+import { readUsers, writeUsers, ensureDefaultAdmin, createId as createUserId } from './users.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 8787)
@@ -11,6 +13,63 @@ const __dirname = path.dirname(__filename)
 const DB_PATH = path.join(__dirname, 'db.json')
 
 app.use(express.json({ limit: '15mb' }))
+
+// === AUTH ===
+
+app.get('/api/health', (_req, res) => res.json({ ok: true }))
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body ?? {}
+  if (!username || !password) { res.status(400).json({ error: 'Укажите логин и пароль' }); return }
+  const users = await readUsers()
+  const user = users.find((u) => u.username === username)
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    res.status(401).json({ error: 'Неверный логин или пароль' }); return
+  }
+  const token = createToken(user)
+  res.json({ token, user: { id: user.id, username: user.username, role: user.role } })
+})
+
+function authMiddleware(req, res, next) {
+  const token = (req.headers.authorization ?? '').replace('Bearer ', '')
+  const payload = verifyToken(token)
+  if (!payload) { res.status(401).json({ error: 'Не авторизован' }); return }
+  req.user = payload
+  next()
+}
+
+app.use('/api', authMiddleware)
+
+app.get('/api/auth/me', (req, res) => res.json({ user: req.user }))
+
+app.get('/api/auth/users', async (req, res) => {
+  if (req.user.role !== 'admin') { res.status(403).json({ error: 'Доступ запрещён' }); return }
+  const users = await readUsers()
+  res.json({ users: users.map((u) => ({ id: u.id, username: u.username, role: u.role, createdAt: u.createdAt })) })
+})
+
+app.post('/api/auth/users', async (req, res) => {
+  if (req.user.role !== 'admin') { res.status(403).json({ error: 'Доступ запрещён' }); return }
+  const { username, password, role = 'user' } = req.body ?? {}
+  if (!username || !password) { res.status(400).json({ error: 'Укажите логин и пароль' }); return }
+  const users = await readUsers()
+  if (users.find((u) => u.username === username)) { res.status(409).json({ error: 'Пользователь уже существует' }); return }
+  const newUser = { id: createUserId(), username, passwordHash: hashPassword(password), role: role === 'admin' ? 'admin' : 'user', createdAt: Date.now() }
+  users.push(newUser)
+  await writeUsers(users)
+  res.json({ user: { id: newUser.id, username: newUser.username, role: newUser.role } })
+})
+
+app.delete('/api/auth/users/:id', async (req, res) => {
+  if (req.user.role !== 'admin') { res.status(403).json({ error: 'Доступ запрещён' }); return }
+  if (req.params.id === req.user.id) { res.status(400).json({ error: 'Нельзя удалить себя' }); return }
+  const users = await readUsers()
+  const index = users.findIndex((u) => u.id === req.params.id)
+  if (index === -1) { res.status(404).json({ error: 'Пользователь не найден' }); return }
+  users.splice(index, 1)
+  await writeUsers(users)
+  res.json({ ok: true })
+})
 
 async function ensureDb() {
   try {
@@ -45,9 +104,6 @@ function normalizeDate(value) {
   return date.toISOString().slice(0, 10)
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true })
-})
 
 app.post('/api/chat', async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY
@@ -279,6 +335,8 @@ app.post('/api/documents/extract', async (req, res) => {
   }
 })
 
-app.listen(port, () => {
-  console.log(`Proxy server listening on http://localhost:${port}`)
+ensureDefaultAdmin().then(() => {
+  app.listen(port, () => {
+    console.log(`Proxy server listening on http://localhost:${port}`)
+  })
 })

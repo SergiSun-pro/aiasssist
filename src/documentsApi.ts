@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type { DocumentRecord, TodoItem } from './types'
 
 export interface CreateDocumentInput {
@@ -20,17 +21,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 export async function listDocuments(query = ''): Promise<DocumentRecord[]> {
   const url = query ? `/api/documents?q=${encodeURIComponent(query)}` : '/api/documents'
-  const response = await fetch(url)
+  const response = await authFetch(url)
   return parseResponse<{ documents: DocumentRecord[] }>(response).then((v) => v.documents)
 }
 
 export async function getDocument(id: string): Promise<DocumentRecord> {
-  const response = await fetch(`/api/documents/${encodeURIComponent(id)}`)
+  const response = await authFetch(`/api/documents/${encodeURIComponent(id)}`)
   return parseResponse<{ document: DocumentRecord }>(response).then((v) => v.document)
 }
 
 export async function createDocument(payload: CreateDocumentInput): Promise<DocumentRecord> {
-  const response = await fetch('/api/documents', {
+  const response = await authFetch('/api/documents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -39,18 +40,18 @@ export async function createDocument(payload: CreateDocumentInput): Promise<Docu
 }
 
 export async function runReminders(): Promise<TodoItem[]> {
-  const response = await fetch('/api/reminders/run', { method: 'POST' })
+  const response = await authFetch('/api/reminders/run', { method: 'POST' })
   const data = await parseResponse<{ ok: true; newTodos: TodoItem[] }>(response)
   return data.newTodos ?? []
 }
 
 export async function listTodos(): Promise<TodoItem[]> {
-  const response = await fetch('/api/todos')
+  const response = await authFetch('/api/todos')
   return parseResponse<{ todos: TodoItem[] }>(response).then((v) => v.todos)
 }
 
 export async function setTodoDone(id: string, done: boolean): Promise<void> {
-  const response = await fetch(`/api/todos/${id}`, {
+  const response = await authFetch(`/api/todos/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ done })
@@ -64,7 +65,7 @@ export async function extractDocument(imageDataUrl: string, model: string): Prom
   fields: Record<string, string>
   expiresAt?: string
 }> {
-  const response = await fetch('/api/documents/extract', {
+  const response = await authFetch('/api/documents/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ imageDataUrl, model })

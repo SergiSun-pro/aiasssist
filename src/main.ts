@@ -1,4 +1,6 @@
 import './style.css'
+import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
+import type { AuthUser } from './auth'
 import { createDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone } from './documentsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
@@ -12,9 +14,10 @@ const initialState = repository.load()
 const state: AppState = { conversations: initialState.conversations, activeConversationId: initialState.activeConversationId }
 let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
-let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' = 'chat'
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' = 'chat'
 let docImageDataUrl: string | undefined
 let notifications: AppNotification[] = loadNotifications()
+let currentUser: AuthUser | null = null
 
 function loadNotifications(): AppNotification[] {
   try { return JSON.parse(localStorage.getItem('aiassist.notifications.v1') ?? '[]') } catch { return [] }
@@ -28,7 +31,53 @@ function addNotification(text: string) {
   updateNotificationBadge()
 }
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout">
+let modelSelect: HTMLSelectElement
+let contentRoot: HTMLDivElement
+let conversationListEl: HTMLDivElement
+
+function checkAuthAndInit() {
+  currentUser = getCurrentUser()
+  if (!currentUser) { showLoginForm(); return }
+  initApp()
+}
+
+function showLoginForm() {
+  document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-box">
+        <h1 class="login-title">aiasssist</h1>
+        <form id="login-form" class="login-form">
+          <input id="login-username" placeholder="Логин" autocomplete="username" required />
+          <input id="login-password" type="password" placeholder="Пароль" autocomplete="current-password" required />
+          <button type="submit" id="login-btn">Войти</button>
+          <p id="login-error" class="login-error hidden"></p>
+        </form>
+      </div>
+    </div>`
+  document.querySelector<HTMLFormElement>('#login-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const username = document.querySelector<HTMLInputElement>('#login-username')!.value.trim()
+    const password = document.querySelector<HTMLInputElement>('#login-password')!.value
+    const btn = document.querySelector<HTMLButtonElement>('#login-btn')!
+    const errEl = document.querySelector<HTMLParagraphElement>('#login-error')!
+    btn.textContent = 'Вхожу...'
+    btn.disabled = true
+    errEl.classList.add('hidden')
+    try {
+      currentUser = await login(username, password)
+      initApp()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка входа'
+      errEl.classList.remove('hidden')
+      btn.textContent = 'Войти'
+      btn.disabled = false
+    }
+  }
+}
+
+function initApp() {
+  const isAdmin = currentUser?.role === 'admin'
+  document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout">
   <aside class="sidebar">
     <h1>aiasssist</h1>
     <button id="new-chat-button">+ Новая беседа</button>
@@ -39,7 +88,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout
       <button id="tab-base" class="tab">База</button>
       <button id="tab-todos" class="tab">Дела</button>
       <button id="tab-notifications" class="tab tab-notify">Уведомления<span id="notify-badge" class="notify-badge hidden"></span></button>
+      ${isAdmin ? '<button id="tab-users" class="tab">Пользователи</button>' : ''}
     </nav>
+    <div class="sidebar-footer">
+      <span class="sidebar-user">${currentUser?.username ?? ''}</span>
+      <button id="logout-btn" class="logout-btn">Выйти</button>
+    </div>
   </aside>
   <section class="chat-panel">
     <header class="toolbar">
@@ -50,27 +104,32 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<main class="layout
   </section>
 </main>`
 
-const modelSelect = document.querySelector<HTMLSelectElement>('#model-select')!
-const contentRoot = document.querySelector<HTMLDivElement>('#content-root')!
-const conversationListEl = document.querySelector<HTMLDivElement>('#conversation-list')!
+  modelSelect = document.querySelector<HTMLSelectElement>('#model-select')!
+  contentRoot = document.querySelector<HTMLDivElement>('#content-root')!
+  conversationListEl = document.querySelector<HTMLDivElement>('#conversation-list')!
 
-DEFAULT_MODELS.forEach((model) => modelSelect.append(new Option(model, model)))
-if (!state.activeConversationId) createConversation('Новая беседа')
+  DEFAULT_MODELS.forEach((model) => modelSelect.append(new Option(model, model)))
+  if (!state.activeConversationId) createConversation('Новая беседа')
 
-document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener('click', () => { createConversation('Новая беседа'); render() })
-document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click', () => setTab('chat'))
-document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
-document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
-document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
-document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
-document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
+  document.querySelector<HTMLButtonElement>('#new-chat-button')!.addEventListener('click', () => { createConversation('Новая беседа'); render() })
+  document.querySelector<HTMLButtonElement>('#tab-chat')!.addEventListener('click', () => setTab('chat'))
+  document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
+  document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
+  document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
+  document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
+  document.querySelector<HTMLButtonElement>('#run-reminders')!.addEventListener('click', () => runRemindersAndNotify())
+  document.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => { clearToken(); currentUser = null; showLoginForm() })
+  if (isAdmin) document.querySelector<HTMLButtonElement>('#tab-users')?.addEventListener('click', () => setTab('users'))
 
-refreshData().finally(() => { render(); updateNotificationBadge() })
-requestNotificationPermission()
-runRemindersAndNotify()
-setInterval(runRemindersAndNotify, 30 * 60 * 1000)
+  refreshData().finally(() => { render(); updateNotificationBadge() })
+  requestNotificationPermission()
+  runRemindersAndNotify()
+  setInterval(runRemindersAndNotify, 30 * 60 * 1000)
+}
 
-function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications') {
+checkAuthAndInit()
+
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users') {
   activeTab = tab
   document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'))
   const tabId = tab === 'documents' ? 'docs' : tab
@@ -90,6 +149,7 @@ function render() {
   if (activeTab === 'base') renderBase()
   if (activeTab === 'todos') renderTodos()
   if (activeTab === 'notifications') renderNotifications()
+  if (activeTab === 'users') renderUsers()
 }
 
 function updateNotificationBadge() {
@@ -101,6 +161,61 @@ function updateNotificationBadge() {
     badge.classList.remove('hidden')
   } else {
     badge.classList.add('hidden')
+  }
+}
+
+async function renderUsers() {
+  contentRoot.innerHTML = `<section class="documents">
+    <h2 style="margin:0 0 14px">Пользователи</h2>
+    <form id="user-form" class="doc-form" style="max-width:400px">
+      <input id="user-username" placeholder="Логин" required />
+      <input id="user-password" type="password" placeholder="Пароль" required />
+      <label class="checkbox-label">
+        <input id="user-is-admin" type="checkbox" /> Администратор
+      </label>
+      <button type="submit">Создать пользователя</button>
+      <p id="user-error" class="login-error hidden"></p>
+    </form>
+    <div id="users-list" class="docs-list" style="margin-top:16px"></div>
+  </section>`
+
+  async function loadAndRenderList() {
+    const list = document.querySelector<HTMLDivElement>('#users-list')!
+    try {
+      const users = await fetchUsers()
+      list.innerHTML = ''
+      for (const u of users) {
+        const row = document.createElement('div')
+        row.className = 'doc-card'
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-direction:row;gap:12px'
+        row.innerHTML = `<div><strong>${escapeAttr(u.username)}</strong> <span style="color:var(--muted);font-size:12px">${u.role === 'admin' ? 'Администратор' : 'Пользователь'}</span></div>${u.id !== currentUser?.id ? `<button class="field-remove" data-id="${u.id}" title="Удалить">✕</button>` : ''}`
+        row.querySelector<HTMLButtonElement>('.field-remove')?.addEventListener('click', async () => {
+          if (!confirm(`Удалить пользователя ${u.username}?`)) return
+          try { await deleteUser(u.id); await loadAndRenderList() } catch (e) { alert(e instanceof Error ? e.message : 'Ошибка') }
+        })
+        list.appendChild(row)
+      }
+    } catch { list.innerHTML = '<p class="hint">Не удалось загрузить пользователей</p>' }
+  }
+
+  await loadAndRenderList()
+
+  document.querySelector<HTMLFormElement>('#user-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const username = document.querySelector<HTMLInputElement>('#user-username')!.value.trim()
+    const password = document.querySelector<HTMLInputElement>('#user-password')!.value
+    const isAdmin = document.querySelector<HTMLInputElement>('#user-is-admin')!.checked
+    const errEl = document.querySelector<HTMLParagraphElement>('#user-error')!
+    errEl.classList.add('hidden')
+    try {
+      await createUser(username, password, isAdmin ? 'admin' : 'user')
+      document.querySelector<HTMLInputElement>('#user-username')!.value = ''
+      document.querySelector<HTMLInputElement>('#user-password')!.value = ''
+      await loadAndRenderList()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка'
+      errEl.classList.remove('hidden')
+    }
   }
 }
 

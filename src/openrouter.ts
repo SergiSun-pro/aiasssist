@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type { ChatMessage } from './types'
 
 export interface OpenRouterRequest {
@@ -41,7 +42,7 @@ export async function requestOpenRouterCompletion({
     }
   }
 
-  const response = await fetch('/api/chat', {
+  const response = await authFetch('/api/chat', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

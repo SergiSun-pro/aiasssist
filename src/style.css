@@ -346,6 +346,80 @@ button {
   border: 1px solid var(--line);
 }
 
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.login-box {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 340px;
+}
+
+.login-title {
+  margin: 0 0 24px;
+  font-size: 22px;
+  text-align: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-error {
+  color: #e84c4c;
+  font-size: 13px;
+  margin: 0;
+}
+
+.login-error.hidden {
+  display: none;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-user {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logout-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  color: var(--muted);
+  border-color: var(--line);
+  flex-shrink: 0;
+}
+
+.logout-btn:hover {
+  color: #e84c4c;
+  border-color: #e84c4c;
+}
+
 .drop-zone {
   border: 2px dashed var(--line);
   border-radius: 10px;
