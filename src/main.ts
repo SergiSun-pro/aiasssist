@@ -400,10 +400,6 @@ function findDocumentImage(text: string): string | undefined {
   const lower = text.toLowerCase()
   const photoKeywords = ['фото', 'покажи', 'картинк', 'изображени', 'скан', 'фотограф', 'photo', 'image']
 
-  console.log('[findDocumentImage] docs total:', documents.length)
-  console.log('[findDocumentImage] docs with image:', documents.filter((d) => d.imageDataUrl).length)
-  console.log('[findDocumentImage] titles:', documents.map((d) => d.title))
-
   // сначала пробуем найти по названию документа
   for (const doc of documents) {
     if (doc.imageDataUrl && lower.includes(doc.title.toLowerCase())) return doc.imageDataUrl
