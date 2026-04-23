@@ -75,7 +75,7 @@ async function ensureDb() {
   try {
     await fs.access(DB_PATH)
   } catch {
-    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [] }, null, 2), 'utf8')
+    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [] }, null, 2), 'utf8')
   }
 }
 
@@ -85,7 +85,8 @@ async function readDb() {
   const parsed = JSON.parse(raw)
   return {
     documents: Array.isArray(parsed.documents) ? parsed.documents : [],
-    todos: Array.isArray(parsed.todos) ? parsed.todos : []
+    todos: Array.isArray(parsed.todos) ? parsed.todos : [],
+    instructions: Array.isArray(parsed.instructions) ? parsed.instructions : []
   }
 }
 
@@ -366,6 +367,52 @@ app.post('/api/documents/extract', async (req, res) => {
       error: error instanceof Error ? error.message : 'Ошибка распознавания документа'
     })
   }
+})
+
+// === INSTRUCTIONS ===
+
+app.get('/api/instructions', async (_req, res) => {
+  const db = await readDb()
+  res.json({ instructions: db.instructions })
+})
+
+app.post('/api/instructions', async (req, res) => {
+  const { title, tags, steps } = req.body ?? {}
+  if (!title) { res.status(400).json({ error: 'title обязателен' }); return }
+  const db = await readDb()
+  const instruction = {
+    id: createId(),
+    title: String(title),
+    tags: Array.isArray(tags) ? tags.map(String).filter(Boolean) : [],
+    steps: Array.isArray(steps) ? steps : [],
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+  db.instructions.unshift(instruction)
+  await writeDb(db)
+  res.json({ instruction })
+})
+
+app.patch('/api/instructions/:id', async (req, res) => {
+  const db = await readDb()
+  const instruction = db.instructions.find((i) => i.id === req.params.id)
+  if (!instruction) { res.status(404).json({ error: 'Инструкция не найдена' }); return }
+  const { title, tags, steps } = req.body ?? {}
+  if (title != null) instruction.title = String(title)
+  if (Array.isArray(tags)) instruction.tags = tags.map(String).filter(Boolean)
+  if (Array.isArray(steps)) instruction.steps = steps
+  instruction.updatedAt = Date.now()
+  await writeDb(db)
+  res.json({ instruction })
+})
+
+app.delete('/api/instructions/:id', async (req, res) => {
+  const db = await readDb()
+  const index = db.instructions.findIndex((i) => i.id === req.params.id)
+  if (index === -1) { res.status(404).json({ error: 'Инструкция не найдена' }); return }
+  db.instructions.splice(index, 1)
+  await writeDb(db)
+  res.json({ ok: true })
 })
 
 ensureDefaultAdmin().then(() => {

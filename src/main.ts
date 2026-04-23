@@ -3,9 +3,10 @@ import { filesToImageDataUrls, readAsDataUrl } from './pdfUtils'
 import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
 import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
+import { createInstruction, deleteInstruction, listInstructions, updateInstruction } from './instructionsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
-import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
+import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Instruction, InstructionStep, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
@@ -21,7 +22,10 @@ const initialState = repository.load()
 const state: AppState = { conversations: initialState.conversations, activeConversationId: initialState.activeConversationId }
 let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
-let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' = 'chat'
+let instructions: Instruction[] = []
+let instructionSubView: 'list' | 'add' | 'edit' | 'view' = 'list'
+let activeInstruction: Instruction | null = null
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' = 'chat'
 let docImageDataUrl: string | undefined
 let docExtractImages: string[] = []
 let docTags: string[] = []
@@ -99,6 +103,7 @@ function initApp() {
       <button id="tab-docs" class="nav-tab" data-label="Документы"><span class="nav-icon">📄</span><span class="nav-label">Документы</span></button>
       <button id="tab-base" class="nav-tab" data-label="База"><span class="nav-icon">📚</span><span class="nav-label">База</span></button>
       <button id="tab-todos" class="nav-tab" data-label="Дела"><span class="nav-icon">✓</span><span class="nav-label">Дела</span></button>
+      <button id="tab-instructions" class="nav-tab" data-label="Инструкции"><span class="nav-icon">📋</span><span class="nav-label">Инструкции</span></button>
       <button id="tab-notifications" class="nav-tab tab-notify" data-label="Уведомления"><span class="nav-icon">🔔</span><span class="nav-label">Уведомления</span><span id="notify-badge" class="notify-badge hidden"></span></button>
       ${isAdmin ? '<button id="tab-users" class="nav-tab" data-label="Пользователи"><span class="nav-icon">👥</span><span class="nav-label">Пользователи</span></button>' : ''}
     </nav>
@@ -129,6 +134,7 @@ function initApp() {
   document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
   document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
   document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
+  document.querySelector<HTMLButtonElement>('#tab-instructions')!.addEventListener('click', () => setTab('instructions'))
   document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
   document.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => { clearToken(); currentUser = null; showLoginForm() })
   if (isAdmin) document.querySelector<HTMLButtonElement>('#tab-users')?.addEventListener('click', () => setTab('users'))
@@ -149,7 +155,7 @@ function applyTabLayout() {
 
 checkAuthAndInit()
 
-function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users') {
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions') {
   activeTab = tab
   document.querySelectorAll('.nav-tab').forEach((el) => el.classList.remove('active'))
   const tabId = tab === 'documents' ? 'docs' : tab
@@ -168,6 +174,7 @@ function render() {
   if (activeTab === 'base') renderBase()
   if (activeTab === 'todos') renderTodos()
   if (activeTab === 'notifications') renderNotifications()
+  if (activeTab === 'instructions') renderInstructions()
   if (activeTab === 'users') renderUsers()
 }
 
@@ -859,6 +866,293 @@ function addFieldRow(key = '', value = '') {
   list.appendChild(row)
 }
 
+// ===================== INSTRUCTIONS =====================
+
+function renderInstructions() {
+  if (instructionSubView === 'add' || instructionSubView === 'edit') { renderInstructionForm(activeInstruction ?? undefined); return }
+  if (instructionSubView === 'view' && activeInstruction) { renderInstructionView(activeInstruction); return }
+  renderInstructionsList()
+}
+
+function renderInstructionsList() {
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div><h2>Инструкции</h2><p class="page-subtitle">Пошаговые руководства · Всего: ${instructions.length}</p></div>
+      <button id="add-instruction-btn" class="btn-primary">+ Добавить инструкцию</button>
+    </div>
+    <div id="instructions-list" class="instructions-list"></div>
+  </section>`
+  document.querySelector<HTMLButtonElement>('#add-instruction-btn')!.onclick = () => {
+    instructionSubView = 'add'; activeInstruction = null; renderInstructions()
+  }
+  const list = document.querySelector<HTMLDivElement>('#instructions-list')!
+  if (instructions.length === 0) {
+    list.innerHTML = '<p class="hint">Инструкций пока нет. Создайте первую!</p>'; return
+  }
+  for (const instr of instructions) {
+    const card = document.createElement('article')
+    card.className = 'instruction-card'
+    const tagsHtml = instr.tags.length ? instr.tags.map((t) => `<span class="tag-chip tag-chip-sm">${escapeAttr(t)}</span>`).join('') : ''
+    card.innerHTML = `
+      <div class="instruction-card-header">
+        <div class="instruction-card-title">${escapeAttr(instr.title)}</div>
+        <div class="instruction-card-meta">${instr.steps.length} шаг${instr.steps.length === 1 ? '' : instr.steps.length < 5 ? 'а' : 'ов'}</div>
+      </div>
+      ${tagsHtml ? `<div class="doc-tags">${tagsHtml}</div>` : ''}
+      <div class="instruction-card-preview">${escapeAttr(instr.steps[0]?.text.slice(0, 100) ?? '')}${(instr.steps[0]?.text.length ?? 0) > 100 ? '...' : ''}</div>
+      <div class="doc-card-actions">
+        <button class="instr-view-btn btn-primary">👁 Просмотр</button>
+        <button class="instr-edit-btn btn-secondary">✏️ Редактировать</button>
+        <button class="instr-pdf-btn btn-secondary">📄 PDF</button>
+        <button class="instr-delete-btn btn-secondary btn-danger">🗑</button>
+      </div>`
+    card.querySelector('.instr-view-btn')!.addEventListener('click', () => { activeInstruction = instr; instructionSubView = 'view'; renderInstructions() })
+    card.querySelector('.instr-edit-btn')!.addEventListener('click', () => { activeInstruction = instr; instructionSubView = 'edit'; renderInstructions() })
+    card.querySelector('.instr-pdf-btn')!.addEventListener('click', () => downloadInstructionPdf(instr))
+    card.querySelector('.instr-delete-btn')!.addEventListener('click', async () => {
+      if (!confirm(`Удалить инструкцию «${instr.title}»?`)) return
+      await deleteInstruction(instr.id); await refreshData(); renderInstructions()
+    })
+    list.appendChild(card)
+  }
+}
+
+function renderInstructionView(instr: Instruction) {
+  const tagsHtml = instr.tags.length ? instr.tags.map((t) => `<span class="tag-chip tag-chip-sm">${escapeAttr(t)}</span>`).join('') : ''
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="instr-back" class="btn-secondary">← Назад</button>
+        <div><h2 style="margin:0">${escapeAttr(instr.title)}</h2>${tagsHtml ? `<div class="doc-tags" style="margin-top:4px">${tagsHtml}</div>` : ''}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="instr-edit-view" class="btn-secondary">✏️ Редактировать</button>
+        <button id="instr-pdf-view" class="btn-secondary">📄 Скачать PDF</button>
+      </div>
+    </div>
+    <div id="instr-steps-view" class="instr-steps-view"></div>
+  </section>`
+  document.querySelector('#instr-back')!.addEventListener('click', () => { instructionSubView = 'list'; activeInstruction = null; renderInstructions() })
+  document.querySelector('#instr-edit-view')!.addEventListener('click', () => { instructionSubView = 'edit'; renderInstructions() })
+  document.querySelector('#instr-pdf-view')!.addEventListener('click', () => downloadInstructionPdf(instr))
+  const stepsEl = document.querySelector<HTMLDivElement>('#instr-steps-view')!
+  if (instr.steps.length === 0) { stepsEl.innerHTML = '<p class="hint">Шагов нет.</p>'; return }
+  instr.steps.forEach((step, i) => {
+    const div = document.createElement('div')
+    div.className = 'instr-step-view'
+    div.innerHTML = `
+      <div class="instr-step-number">Шаг ${i + 1}</div>
+      <div class="instr-step-text">${escapeAttr(step.text).replace(/\n/g, '<br>')}</div>
+      ${step.imageDataUrl ? `<img class="instr-step-img" src="${step.imageDataUrl}" alt="Фото шага" title="Нажмите для просмотра" />` : ''}
+      ${step.attachmentName ? `<div class="instr-step-file"><a class="instr-file-link" href="${step.attachmentDataUrl}" download="${escapeAttr(step.attachmentName)}">📎 ${escapeAttr(step.attachmentName)}</a></div>` : ''}`
+    if (step.imageDataUrl) div.querySelector<HTMLImageElement>('.instr-step-img')!.onclick = () => openImageFullscreen(step.imageDataUrl!)
+    stepsEl.appendChild(div)
+  })
+}
+
+function renderInstructionForm(instr?: Instruction) {
+  const isEdit = !!instr
+  let formTags: string[] = [...(instr?.tags ?? [])]
+  let formSteps: Array<{ id: string; text: string; imageDataUrl?: string; attachmentName?: string; attachmentDataUrl?: string }> =
+    instr ? instr.steps.map((s) => ({ ...s })) : [{ id: createId(), text: '' }]
+
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button id="instr-form-back" class="btn-secondary">← Назад</button>
+        <h2 style="margin:0">${isEdit ? 'Редактировать инструкцию' : 'Новая инструкция'}</h2>
+      </div>
+    </div>
+    <form id="instr-form" class="doc-form">
+      <div class="form-section">
+        <label class="form-label">Название инструкции</label>
+        <input id="instr-title" placeholder="Например: Как оформить ОСАГО" value="${escapeAttr(instr?.title ?? '')}" required />
+      </div>
+      <div class="form-section">
+        <label class="form-label">Теги</label>
+        <div class="tags-editor">
+          <div id="instr-tags-chips" class="tags-chips"></div>
+          <input id="instr-tags-input" class="tags-input" placeholder="Введите тег и нажмите Enter или запятую" />
+        </div>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Шаги</label>
+        <div id="instr-steps-editor" class="instr-steps-editor"></div>
+        <button id="add-step-btn" type="button" class="add-field-btn" style="margin-top:8px">+ Добавить шаг</button>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">${isEdit ? 'Сохранить изменения' : 'Создать инструкцию'}</button>
+        <button type="button" id="instr-cancel" class="btn-secondary">Отмена</button>
+      </div>
+      <p id="instr-error" class="login-error hidden"></p>
+    </form>
+  </section>`
+
+  const goBack = () => { instructionSubView = isEdit ? 'view' : 'list'; renderInstructions() }
+  document.querySelector('#instr-form-back')!.addEventListener('click', goBack)
+  document.querySelector('#instr-cancel')!.addEventListener('click', goBack)
+
+  // теги
+  const tagsChipsEl = document.querySelector<HTMLDivElement>('#instr-tags-chips')!
+  const refreshTags = () => {
+    tagsChipsEl.innerHTML = formTags.map((t) => `<span class="tag-chip">${escapeAttr(t)}<button type="button" class="tag-chip-remove" data-tag="${escapeAttr(t)}">✕</button></span>`).join('')
+    tagsChipsEl.querySelectorAll<HTMLButtonElement>('.tag-chip-remove').forEach((btn) => {
+      btn.onclick = () => { formTags = formTags.filter((t) => t !== btn.dataset.tag); refreshTags() }
+    })
+  }
+  refreshTags()
+  document.querySelector<HTMLInputElement>('#instr-tags-input')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      const val = (e.target as HTMLInputElement).value.trim().replace(/,+$/, '')
+      if (val && !formTags.includes(val)) { formTags.push(val); refreshTags() }
+      ;(e.target as HTMLInputElement).value = ''
+    }
+  })
+
+  // редактор шагов
+  const stepsEditor = document.querySelector<HTMLDivElement>('#instr-steps-editor')!
+  const renderStepEditors = () => {
+    stepsEditor.innerHTML = ''
+    formSteps.forEach((step, i) => {
+      const div = document.createElement('div')
+      div.className = 'instr-step-edit'
+      div.dataset.stepId = step.id
+      div.innerHTML = `
+        <div class="instr-step-edit-header">
+          <span class="instr-step-num">Шаг ${i + 1}</span>
+          <div style="display:flex;gap:4px">
+            ${i > 0 ? `<button type="button" class="step-move-up conv-action-btn" title="Вверх">↑</button>` : ''}
+            ${i < formSteps.length - 1 ? `<button type="button" class="step-move-down conv-action-btn" title="Вниз">↓</button>` : ''}
+            <button type="button" class="step-remove conv-action-btn conv-delete-btn" title="Удалить шаг">✕</button>
+          </div>
+        </div>
+        <textarea class="step-text-input" placeholder="Текст шага..." rows="3">${escapeAttr(step.text)}</textarea>
+        <div class="step-attachments">
+          <div class="step-drop-zone ${step.imageDataUrl ? 'has-image' : ''}" data-step="${step.id}">
+            ${step.imageDataUrl ? `<img class="step-preview-img" src="${step.imageDataUrl}" alt="фото" /><button type="button" class="step-img-remove">✕ убрать фото</button>` : `<span class="drop-hint">📷 Перетащите фото или нажмите</span>`}
+            <input type="file" class="step-img-input" accept="image/*" style="display:none" />
+          </div>
+          <div class="step-file-area">
+            ${step.attachmentName ? `<span class="step-file-name">📎 ${escapeAttr(step.attachmentName)}<button type="button" class="step-file-remove">✕</button></span>` : `<label class="step-file-label">📎 Прикрепить файл<input type="file" class="step-file-input" style="display:none" /></label>`}
+          </div>
+        </div>`
+      // обновляем данные шага при изменении textarea
+      div.querySelector<HTMLTextAreaElement>('.step-text-input')!.addEventListener('input', (e) => {
+        const s = formSteps.find((x) => x.id === step.id); if (s) s.text = (e.target as HTMLTextAreaElement).value
+      })
+      // фото шага
+      const dropZone = div.querySelector<HTMLDivElement>('.step-drop-zone')!
+      const imgInput = div.querySelector<HTMLInputElement>('.step-img-input')!
+      const handleStepImg = async (file: File | undefined) => {
+        if (!file?.type.startsWith('image/')) return
+        const url = await readAsDataUrl(file)
+        const s = formSteps.find((x) => x.id === step.id); if (s) s.imageDataUrl = url
+        renderStepEditors()
+      }
+      dropZone.addEventListener('click', (e) => { if ((e.target as HTMLElement).classList.contains('step-img-remove')) return; imgInput.click() })
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over') })
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
+      dropZone.addEventListener('drop', async (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); await handleStepImg(e.dataTransfer?.files?.[0]) })
+      imgInput.onchange = (e) => handleStepImg((e.target as HTMLInputElement).files?.[0])
+      div.querySelector<HTMLButtonElement>('.step-img-remove')?.addEventListener('click', () => {
+        const s = formSteps.find((x) => x.id === step.id); if (s) s.imageDataUrl = undefined; renderStepEditors()
+      })
+      // файл шага
+      const fileInput = div.querySelector<HTMLInputElement>('.step-file-input')
+      fileInput?.addEventListener('change', async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return
+        const dataUrl = await readAsDataUrl(file)
+        const s = formSteps.find((x) => x.id === step.id)
+        if (s) { s.attachmentName = file.name; s.attachmentDataUrl = dataUrl }
+        renderStepEditors()
+      })
+      div.querySelector<HTMLButtonElement>('.step-file-remove')?.addEventListener('click', () => {
+        const s = formSteps.find((x) => x.id === step.id)
+        if (s) { s.attachmentName = undefined; s.attachmentDataUrl = undefined }
+        renderStepEditors()
+      })
+      // перемещение/удаление
+      div.querySelector<HTMLButtonElement>('.step-move-up')?.addEventListener('click', () => {
+        const idx = formSteps.findIndex((x) => x.id === step.id)
+        if (idx > 0) { [formSteps[idx - 1], formSteps[idx]] = [formSteps[idx], formSteps[idx - 1]]; renderStepEditors() }
+      })
+      div.querySelector<HTMLButtonElement>('.step-move-down')?.addEventListener('click', () => {
+        const idx = formSteps.findIndex((x) => x.id === step.id)
+        if (idx < formSteps.length - 1) { [formSteps[idx], formSteps[idx + 1]] = [formSteps[idx + 1], formSteps[idx]]; renderStepEditors() }
+      })
+      div.querySelector<HTMLButtonElement>('.step-remove')?.addEventListener('click', () => {
+        if (formSteps.length === 1) return
+        formSteps = formSteps.filter((x) => x.id !== step.id); renderStepEditors()
+      })
+      stepsEditor.appendChild(div)
+    })
+  }
+  renderStepEditors()
+
+  document.querySelector<HTMLButtonElement>('#add-step-btn')!.onclick = () => {
+    formSteps.push({ id: createId(), text: '' }); renderStepEditors()
+    stepsEditor.lastElementChild?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // сабмит
+  document.querySelector<HTMLFormElement>('#instr-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const title = document.querySelector<HTMLInputElement>('#instr-title')!.value.trim()
+    const errEl = document.querySelector<HTMLParagraphElement>('#instr-error')!
+    const validSteps = formSteps.filter((s) => s.text.trim()) as InstructionStep[]
+    if (!validSteps.length) { errEl.textContent = 'Добавьте хотя бы один шаг'; errEl.classList.remove('hidden'); return }
+    try {
+      if (isEdit && instr) {
+        activeInstruction = await updateInstruction(instr.id, { title, tags: formTags, steps: validSteps })
+      } else {
+        activeInstruction = await createInstruction({ title, tags: formTags, steps: validSteps })
+      }
+      await refreshData()
+      instructionSubView = 'view'
+      renderInstructions()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка сохранения'
+      errEl.classList.remove('hidden')
+    }
+  }
+}
+
+function downloadInstructionPdf(instr: Instruction) {
+  const win = window.open('', '_blank')
+  if (!win) return
+  const stepsHtml = instr.steps.map((step, i) => `
+    <div class="step">
+      <div class="step-num">Шаг ${i + 1}</div>
+      <div class="step-text">${escapeAttr(step.text).replace(/\n/g, '<br>')}</div>
+      ${step.imageDataUrl ? `<img class="step-img" src="${step.imageDataUrl}" alt="Фото" />` : ''}
+      ${step.attachmentName ? `<div class="step-file">📎 ${escapeAttr(step.attachmentName)}</div>` : ''}
+    </div>`).join('')
+  const tagsHtml = instr.tags.length ? `<div class="tags">${instr.tags.map((t) => `<span class="tag">${escapeAttr(t)}</span>`).join('')}</div>` : ''
+  win.document.write(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>${escapeAttr(instr.title)}</title><style>
+    body{font-family:'Segoe UI',Arial,sans-serif;margin:0;padding:32px;color:#1e293b;max-width:800px;margin:0 auto}
+    h1{font-size:26px;font-weight:700;margin:0 0 8px;color:#1e293b}
+    .tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px}
+    .tag{background:#ede9fe;color:#4f46e5;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:500}
+    .meta{color:#64748b;font-size:13px;margin-bottom:24px}
+    .step{margin-bottom:24px;padding:16px 20px;border:1px solid #e2e8f0;border-radius:12px;page-break-inside:avoid}
+    .step-num{font-size:12px;font-weight:700;color:#4f46e5;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+    .step-text{font-size:15px;line-height:1.6;white-space:pre-wrap}
+    .step-img{max-width:100%;max-height:400px;border-radius:8px;margin-top:12px;border:1px solid #e2e8f0;display:block}
+    .step-file{margin-top:8px;color:#64748b;font-size:13px}
+    @media print{body{padding:16px}.step{page-break-inside:avoid}}
+  </style></head><body>
+    <h1>${escapeAttr(instr.title)}</h1>
+    ${tagsHtml}
+    <div class="meta">${instr.steps.length} шаг${instr.steps.length === 1 ? '' : instr.steps.length < 5 ? 'а' : 'ов'} · ${new Date(instr.createdAt).toLocaleDateString('ru')}</div>
+    ${stepsHtml}
+    <script>window.onload=()=>{window.print()}<\/script>
+  </body></html>`)
+  win.document.close()
+}
+
+// ===================== END INSTRUCTIONS =====================
+
 function renderTagChips() {
   const container = document.querySelector<HTMLDivElement>('#tags-chips')
   if (!container) return
@@ -933,11 +1227,11 @@ function renderTodoRow(list: HTMLElement, todo: TodoItem) {
 
 async function refreshData() {
   try {
-    documents = await listDocuments()
-    todos = await listTodos()
+    ;[documents, todos, instructions] = await Promise.all([listDocuments(), listTodos(), listInstructions()])
   } catch {
     documents = []
     todos = []
+    instructions = []
   }
 }
 
@@ -973,11 +1267,18 @@ function buildDocumentSystemPrompt(): string {
     ].filter(Boolean).join('\n')
   }).join('\n\n')
   const todoLines = todos.filter((t) => !t.done).map((t) => `- ${t.text} (до ${t.dueDate})`).join('\n')
+  const instrLines = instructions.map((instr) => {
+    const steps = instr.steps.map((s, i) => `  Шаг ${i + 1}: ${s.text}`).join('\n')
+    return [`📋 ${instr.title}${instr.tags.length ? ` [${instr.tags.join(', ')}]` : ''}`, steps].filter(Boolean).join('\n')
+  }).join('\n\n')
+
   return [
-    'Ты персональный ассистент. У пользователя есть следующие документы:',
+    'Ты персональный ассистент.',
+    'ДОКУМЕНТЫ ПОЛЬЗОВАТЕЛЯ:',
     docLines || 'нет',
-    todoLines ? `\nАктивные напоминания:\n${todoLines}` : '',
-    '\nВАЖНО про фото: когда пользователь просит показать фото документа, изображение уже автоматически отображается в интерфейсе над твоим ответом. Ты получаешь это фото вместе с сообщением. Никогда не говори что не можешь показать фото. Никогда не пиши markdown-ссылки на изображения вида ![](). Просто скажи "Вот фото:" и при желании опиши что на нём видно.'
+    todoLines ? `АКТИВНЫЕ НАПОМИНАНИЯ:\n${todoLines}` : '',
+    instrLines ? `ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ (${instructions.length}):\n${instrLines}` : '',
+    'ПРАВИЛА:\n- Когда спрашивают об инструкции — излагай шаги последовательно или все сразу в зависимости от контекста. Анализируй и объясняй, не просто воспроизводи текст.\n- Если в инструкции нужны документы — показывай их данные из списка выше.\n- Фото документа уже отображается в интерфейсе. Не говори что не можешь показать фото. Не пиши markdown ![](). Просто скажи "Вот фото:" и опиши содержимое.'
   ].filter(Boolean).join('\n\n')
 }
 

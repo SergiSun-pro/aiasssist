@@ -46,6 +46,23 @@ export interface TodoItem {
   createdAt: number
 }
 
+export interface InstructionStep {
+  id: string
+  text: string
+  imageDataUrl?: string
+  attachmentName?: string
+  attachmentDataUrl?: string
+}
+
+export interface Instruction {
+  id: string
+  title: string
+  tags: string[]
+  steps: InstructionStep[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AppNotification {
   id: string
   text: string
