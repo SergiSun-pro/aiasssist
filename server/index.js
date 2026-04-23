@@ -335,7 +335,7 @@ app.post('/api/documents/extract', async (req, res) => {
             content: [
               {
                 type: 'text',
-                text: 'Извлеки из изображения документа JSON формата {"title":"","docType":"","expiresAt":"YYYY-MM-DD или пусто","fields":{"key":"value"}}. Только валидный JSON без пояснений.'
+                text: 'Извлеки из изображения документа данные в виде JSON: {"title":"название документа","docType":"тип документа","expiresAt":"YYYY-MM-DD или пусто","fields":{"название поля на русском":"значение"}}. Все названия полей и значения должны быть на русском языке. Только валидный JSON без пояснений.'
               },
               { type: 'image_url', image_url: { url: imageDataUrl } }
             ]
