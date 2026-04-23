@@ -217,6 +217,34 @@ app.post('/api/documents', async (req, res) => {
   res.json({ document })
 })
 
+app.patch('/api/documents/:id', async (req, res) => {
+  const db = await readDb()
+  const doc = db.documents.find((d) => d.id === req.params.id)
+  if (!doc) { res.status(404).json({ error: 'Документ не найден' }); return }
+  const { title, docType, fields, tags, imageDataUrl, notifyEnabled, notifyBeforeDays, expiresAt } = req.body ?? {}
+  if (title != null) doc.title = String(title)
+  if (docType != null) doc.docType = String(docType)
+  if (fields != null && typeof fields === 'object') doc.fields = fields
+  if (Array.isArray(tags)) doc.tags = tags.map(String).filter(Boolean)
+  if (imageDataUrl != null) doc.imageDataUrl = typeof imageDataUrl === 'string' ? imageDataUrl : undefined
+  doc.notifyEnabled = Boolean(notifyEnabled)
+  doc.notifyBeforeDays = Number.isFinite(Number(notifyBeforeDays)) ? Number(notifyBeforeDays) : 1
+  doc.expiresAt = normalizeDate(expiresAt)
+  doc.updatedAt = Date.now()
+  await writeDb(db)
+  res.json({ document: doc })
+})
+
+app.delete('/api/documents/:id', async (req, res) => {
+  const db = await readDb()
+  const index = db.documents.findIndex((d) => d.id === req.params.id)
+  if (index === -1) { res.status(404).json({ error: 'Документ не найден' }); return }
+  db.documents.splice(index, 1)
+  db.todos = db.todos.filter((t) => t.documentId !== req.params.id)
+  await writeDb(db)
+  res.json({ ok: true })
+})
+
 app.get('/api/todos', async (_req, res) => {
   const db = await readDb()
   res.json({ todos: db.todos })

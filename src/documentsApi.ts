@@ -60,6 +60,20 @@ export async function setTodoDone(id: string, done: boolean): Promise<void> {
   await parseResponse<{ todo: TodoItem }>(response)
 }
 
+export async function updateDocument(id: string, payload: Partial<CreateDocumentInput>): Promise<DocumentRecord> {
+  const response = await authFetch(`/api/documents/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  return parseResponse<{ document: DocumentRecord }>(response).then((v) => v.document)
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  const response = await authFetch(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  await parseResponse<{ ok: true }>(response)
+}
+
 export async function extractDocument(imageDataUrl: string, model: string): Promise<{
   title: string
   docType: string

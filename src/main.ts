@@ -1,7 +1,7 @@
 import './style.css'
 import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
 import type { AuthUser } from './auth'
-import { createDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone } from './documentsApi'
+import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
 import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
@@ -624,12 +624,209 @@ function renderBaseList(docs: DocumentRecord[]) {
       ${tagsHtml}
       ${fields ? `<div class="doc-fields">${fields}</div>` : ''}
       ${d.imageDataUrl ? `<img class="doc-image" src="${d.imageDataUrl}" alt="Фото документа" title="Нажмите для просмотра" />` : ''}
+      <div class="doc-card-actions">
+        <button class="doc-edit-btn btn-secondary">✏️ Редактировать</button>
+        <button class="doc-delete-btn btn-secondary btn-danger">🗑 Удалить</button>
+      </div>
     `
     if (d.imageDataUrl) {
       const img = card.querySelector<HTMLImageElement>('.doc-image')!
       img.onclick = () => openImageFullscreen(d.imageDataUrl!)
     }
+    card.querySelector<HTMLButtonElement>('.doc-edit-btn')!.onclick = () => showEditModal(d)
+    card.querySelector<HTMLButtonElement>('.doc-delete-btn')!.onclick = async () => {
+      if (!confirm(`Удалить документ «${d.title}»?`)) return
+      await deleteDocument(d.id)
+      await refreshData()
+      renderBase()
+    }
     list.appendChild(card)
+  }
+}
+
+function suggestDocumentUpdate(doc: DocumentRecord) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:460px;text-align:center;gap:16px;padding:36px 28px;">
+      <div style="font-size:48px;line-height:1;">📄</div>
+      <h2 style="margin:0;">Срок документа истёк</h2>
+      <p style="color:var(--text-secondary);margin:0;">Документ <strong>${escapeAttr(doc.title)}</strong> просрочен (${doc.expiresAt}). Хотите обновить данные и загрузить новое фото?</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:8px;">
+        <button id="suggest-yes" class="btn-primary">Обновить документ</button>
+        <button id="suggest-no" class="btn-secondary">Позже</button>
+      </div>
+    </div>`
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.querySelector<HTMLButtonElement>('#suggest-no')!.onclick = close
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  overlay.querySelector<HTMLButtonElement>('#suggest-yes')!.onclick = () => {
+    close()
+    showEditModal(doc)
+  }
+}
+
+function showEditModal(doc: DocumentRecord) {
+  let editImageDataUrl: string | undefined = doc.imageDataUrl
+  let editTags: string[] = [...(doc.tags ?? [])]
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+
+  const tagsChipsHtml = () => editTags.map((t) =>
+    `<span class="tag-chip">${escapeAttr(t)}<button type="button" class="tag-chip-remove" data-tag="${escapeAttr(t)}">✕</button></span>`
+  ).join('')
+
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Редактировать документ</h2>
+        <button id="modal-close" class="modal-close" title="Закрыть">✕</button>
+      </div>
+      <form id="edit-doc-form" class="doc-form">
+        <div class="form-section">
+          <label class="form-label">Фото документа</label>
+          <div id="edit-drop-zone" class="drop-zone">
+            <div class="drop-zone-icon">📷</div>
+            <div id="edit-drop-label" class="drop-zone-text">${doc.imageDataUrl ? '✓ Фото загружено' : 'Перетащите фото сюда или нажмите для выбора'}</div>
+            <input id="edit-doc-image" type="file" accept="image/*" />
+          </div>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Основная информация</label>
+          <div class="form-row">
+            <input id="edit-doc-title" placeholder="Название документа" value="${escapeAttr(doc.title)}" required />
+            <input id="edit-doc-type" placeholder="Тип документа" value="${escapeAttr(doc.docType)}" required />
+          </div>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Поля документа</label>
+          <div class="fields-editor">
+            <div id="edit-fields-list" class="fields-list"></div>
+            <button id="edit-add-field-btn" type="button" class="add-field-btn">+ Добавить поле</button>
+          </div>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Теги</label>
+          <div class="tags-editor">
+            <div id="edit-tags-chips" class="tags-chips">${tagsChipsHtml()}</div>
+            <input id="edit-tags-input" class="tags-input" placeholder="Введите тег и нажмите Enter или запятую" />
+          </div>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Срок действия и напоминание</label>
+          <div class="form-row">
+            <input id="edit-doc-expires" type="date" value="${doc.expiresAt ?? ''}" />
+            <div class="notify-controls">
+              <label class="checkbox-label"><input id="edit-doc-notify" type="checkbox" ${doc.notifyEnabled ? 'checked' : ''} /> Уведомлять</label>
+              <label class="notify-days-label">за <input id="edit-doc-notify-days" type="number" min="0" value="${doc.notifyBeforeDays}" /> дней</label>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Сохранить изменения</button>
+          <button type="button" id="modal-cancel" class="btn-secondary">Отмена</button>
+        </div>
+        <p id="edit-error" class="login-error hidden"></p>
+      </form>
+    </div>`
+
+  document.body.appendChild(overlay)
+
+  const close = () => overlay.remove()
+  overlay.querySelector<HTMLButtonElement>('#modal-close')!.onclick = close
+  overlay.querySelector<HTMLButtonElement>('#modal-cancel')!.onclick = close
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+
+  // поля
+  const editFieldsList = overlay.querySelector<HTMLDivElement>('#edit-fields-list')!
+  for (const [k, v] of Object.entries(doc.fields ?? {})) {
+    const row = document.createElement('div')
+    row.className = 'field-row'
+    row.innerHTML = `<input class="field-key" placeholder="Название поля" value="${escapeAttr(k)}" /><input class="field-value" placeholder="Значение" value="${escapeAttr(String(v))}" /><button type="button" class="field-remove" title="Удалить">✕</button>`
+    row.querySelector<HTMLButtonElement>('.field-remove')!.onclick = () => row.remove()
+    editFieldsList.appendChild(row)
+  }
+  if (editFieldsList.children.length === 0) {
+    const row = document.createElement('div')
+    row.className = 'field-row'
+    row.innerHTML = `<input class="field-key" placeholder="Название поля" /><input class="field-value" placeholder="Значение" /><button type="button" class="field-remove">✕</button>`
+    row.querySelector<HTMLButtonElement>('.field-remove')!.onclick = () => row.remove()
+    editFieldsList.appendChild(row)
+  }
+  overlay.querySelector<HTMLButtonElement>('#edit-add-field-btn')!.onclick = () => {
+    const row = document.createElement('div')
+    row.className = 'field-row'
+    row.innerHTML = `<input class="field-key" placeholder="Название поля" /><input class="field-value" placeholder="Значение" /><button type="button" class="field-remove">✕</button>`
+    row.querySelector<HTMLButtonElement>('.field-remove')!.onclick = () => row.remove()
+    editFieldsList.appendChild(row)
+  }
+
+  // теги
+  const editTagsChips = overlay.querySelector<HTMLDivElement>('#edit-tags-chips')!
+  const refreshEditTags = () => {
+    editTagsChips.innerHTML = tagsChipsHtml()
+    editTagsChips.querySelectorAll<HTMLButtonElement>('.tag-chip-remove').forEach((btn) => {
+      btn.onclick = () => { editTags = editTags.filter((t) => t !== btn.dataset.tag); refreshEditTags() }
+    })
+  }
+  refreshEditTags()
+  overlay.querySelector<HTMLInputElement>('#edit-tags-input')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      const val = (e.target as HTMLInputElement).value.trim().replace(/,+$/, '')
+      if (val && !editTags.includes(val)) { editTags.push(val); refreshEditTags() }
+      ;(e.target as HTMLInputElement).value = ''
+    }
+  })
+
+  // фото
+  const dropZone = overlay.querySelector<HTMLDivElement>('#edit-drop-zone')!
+  const dropLabel = overlay.querySelector<HTMLDivElement>('#edit-drop-label')!
+  const imgInput = overlay.querySelector<HTMLInputElement>('#edit-doc-image')!
+  const handleImg = async (file: File | undefined) => {
+    editImageDataUrl = await getImageDataUrl(file)
+    if (file && editImageDataUrl) dropLabel.innerHTML = `✓ Фото выбрано: <strong>${file.name}</strong>`
+  }
+  imgInput.onchange = (e) => handleImg((e.target as HTMLInputElement).files?.[0])
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over') })
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault(); dropZone.classList.remove('drag-over')
+    const file = e.dataTransfer?.files?.[0]
+    if (file?.type.startsWith('image/')) await handleImg(file)
+  })
+  dropZone.addEventListener('click', () => imgInput.click())
+
+  // сабмит
+  overlay.querySelector<HTMLFormElement>('#edit-doc-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const errEl = overlay.querySelector<HTMLParagraphElement>('#edit-error')!
+    const fields: Record<string, string> = {}
+    overlay.querySelectorAll<HTMLDivElement>('.field-row').forEach((row) => {
+      const k = row.querySelector<HTMLInputElement>('.field-key')!.value.trim()
+      const v = row.querySelector<HTMLInputElement>('.field-value')!.value.trim()
+      if (k) fields[k] = v
+    })
+    try {
+      await updateDocument(doc.id, {
+        title: overlay.querySelector<HTMLInputElement>('#edit-doc-title')!.value.trim(),
+        docType: overlay.querySelector<HTMLInputElement>('#edit-doc-type')!.value.trim(),
+        fields,
+        tags: [...editTags],
+        imageDataUrl: editImageDataUrl,
+        notifyEnabled: overlay.querySelector<HTMLInputElement>('#edit-doc-notify')!.checked,
+        notifyBeforeDays: Number(overlay.querySelector<HTMLInputElement>('#edit-doc-notify-days')!.value || '1'),
+        expiresAt: overlay.querySelector<HTMLInputElement>('#edit-doc-expires')!.value || undefined
+      })
+      await refreshData()
+      close()
+      renderBase()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка сохранения'
+      errEl.classList.remove('hidden')
+    }
   }
 }
 
@@ -710,9 +907,16 @@ function renderTodoRow(list: HTMLElement, todo: TodoItem) {
   row.className = `todo-row${todo.done ? ' done' : ''}`
   row.innerHTML = `<input type="checkbox" ${todo.done ? 'checked' : ''}/><div class="todo-body"><div class="todo-text">${escapeAttr(todo.text)}</div><div class="todo-date">до ${todo.dueDate}</div></div>`
   row.querySelector('input')!.addEventListener('change', async (e) => {
-    await setTodoDone(todo.id, (e.target as HTMLInputElement).checked)
+    const checked = (e.target as HTMLInputElement).checked
+    await setTodoDone(todo.id, checked)
     await refreshData()
     renderTodos()
+    if (checked && todo.documentId) {
+      const doc = documents.find((d) => d.id === todo.documentId)
+      if (doc && doc.expiresAt && doc.expiresAt <= new Date().toISOString().slice(0, 10)) {
+        suggestDocumentUpdate(doc)
+      }
+    }
   })
   list.appendChild(row)
 }
