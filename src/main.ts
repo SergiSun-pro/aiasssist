@@ -8,6 +8,12 @@ import type { AppNotification, AppState, ChatMessage, Conversation, DocumentReco
 
 const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
+const MODEL_LABELS: Record<string, string> = {
+  'openai/gpt-4o-mini': 'GPT-4o mini',
+  'anthropic/claude-3.5-haiku': 'Claude 3.5 Haiku',
+  'google/gemini-2.0-flash-001': 'Gemini 2.0 Flash',
+  'deepseek/deepseek-chat-v3-0324': 'DeepSeek Chat V3'
+}
 const repository = new LocalConversationsRepository()
 const initialState = repository.load()
 
@@ -335,7 +341,7 @@ function deleteConversation(id: string) {
 }
 
 function renderChat() {
-  const modelOptions = DEFAULT_MODELS.map((m) => `<option value="${m}"${selectedModel === m ? ' selected' : ''}>${m}</option>`).join('')
+  const modelOptions = DEFAULT_MODELS.map((m) => `<option value="${m}"${selectedModel === m ? ' selected' : ''}>${MODEL_LABELS[m] ?? m}</option>`).join('')
   contentRoot.innerHTML = `<div class="chat-wrap">
     <div id="messages" class="messages"></div>
     <div class="composer-area">
@@ -351,7 +357,10 @@ function renderChat() {
           </button>
         </div>
         <div class="composer-footer">
-          <select id="model-select" class="model-select">${modelOptions}</select>
+          <label class="model-label">
+            <span class="model-label-text">Модель</span>
+            <select id="model-select" class="model-select">${modelOptions}</select>
+          </label>
           <span id="file-name" class="file-name"></span>
         </div>
       </form>
