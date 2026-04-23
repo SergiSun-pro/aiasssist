@@ -6,8 +6,8 @@ import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
 import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, TodoItem } from './types'
 
-const DEFAULT_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro', 'deepseek/deepseek-chat-v3-0324']
-const VISION_MODELS = ['openai/gpt-4.1-mini', 'anthropic/claude-3.7-sonnet', 'google/gemini-2.5-pro']
+const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
+const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
 const repository = new LocalConversationsRepository()
 const initialState = repository.load()
 
@@ -16,6 +16,7 @@ let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
 let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' = 'chat'
 let docImageDataUrl: string | undefined
+let docTags: string[] = []
 let notifications: AppNotification[] = loadNotifications()
 let currentUser: AuthUser | null = null
 
@@ -146,8 +147,6 @@ function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' |
   const tabId = tab === 'documents' ? 'docs' : tab
   document.querySelector(`#tab-${tabId}`)?.classList.add('active')
   if (tab === 'notifications') {
-    notifications.forEach((n) => (n.read = true))
-    saveNotifications()
     updateNotificationBadge()
   }
   applyTabLayout()
@@ -249,13 +248,23 @@ async function renderUsers() {
 }
 
 function renderNotifications() {
+  const unread = notifications.filter((n) => !n.read).length
   contentRoot.innerHTML = `<section class="notifications-panel">
     <div class="page-header-row">
       <div><h2>Уведомления</h2><p class="page-subtitle">Всего: ${notifications.length}</p></div>
-      ${notifications.length > 0 ? '<button id="clear-notifications" class="btn-secondary">Очистить все</button>' : ''}
+      <div class="notify-actions">
+        ${unread > 0 ? '<button id="mark-all-read" class="btn-secondary">Прочитать все</button>' : ''}
+        ${notifications.length > 0 ? '<button id="clear-notifications" class="btn-secondary btn-danger">Очистить все</button>' : ''}
+      </div>
     </div>
     <div id="notify-list" class="notify-list"></div>
   </section>`
+  document.querySelector<HTMLButtonElement>('#mark-all-read')?.addEventListener('click', () => {
+    notifications.forEach((n) => (n.read = true))
+    saveNotifications()
+    updateNotificationBadge()
+    renderNotifications()
+  })
   const clearBtn = document.querySelector<HTMLButtonElement>('#clear-notifications')
   if (clearBtn) clearBtn.onclick = () => {
     if (!confirm('Очистить все уведомления?')) return
@@ -278,12 +287,51 @@ function renderNotifications() {
 function renderConversations() {
   conversationListEl.innerHTML = ''
   for (const c of state.conversations) {
-    const b = document.createElement('button')
-    b.className = `conversation-item ${c.id === state.activeConversationId ? 'active' : ''}`
-    b.textContent = c.title
-    b.onclick = () => { state.activeConversationId = c.id; persistAndRender() }
-    conversationListEl.appendChild(b)
+    const item = document.createElement('div')
+    item.className = `conversation-item ${c.id === state.activeConversationId ? 'active' : ''}`
+
+    const titleBtn = document.createElement('button')
+    titleBtn.className = 'conv-title-btn'
+    titleBtn.textContent = c.title
+    titleBtn.title = c.title
+    titleBtn.onclick = () => { state.activeConversationId = c.id; persistAndRender() }
+
+    const actions = document.createElement('div')
+    actions.className = 'conv-actions'
+
+    const renameBtn = document.createElement('button')
+    renameBtn.className = 'conv-action-btn'
+    renameBtn.title = 'Переименовать'
+    renameBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
+    renameBtn.onclick = (e) => {
+      e.stopPropagation()
+      const newTitle = prompt('Название беседы:', c.title)
+      if (newTitle?.trim()) { c.title = newTitle.trim(); persistAndRender() }
+    }
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'conv-action-btn conv-delete-btn'
+    deleteBtn.title = 'Удалить беседу'
+    deleteBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'
+    deleteBtn.onclick = (e) => {
+      e.stopPropagation()
+      if (!confirm(`Удалить беседу «${c.title}»?`)) return
+      deleteConversation(c.id)
+    }
+
+    actions.append(renameBtn, deleteBtn)
+    item.append(titleBtn, actions)
+    conversationListEl.appendChild(item)
   }
+}
+
+function deleteConversation(id: string) {
+  state.conversations = state.conversations.filter((c) => c.id !== id)
+  if (state.activeConversationId === id) {
+    state.activeConversationId = state.conversations[0]?.id ?? null
+    if (!state.activeConversationId) createConversation('Новая беседа')
+  }
+  persistAndRender()
 }
 
 function renderChat() {
@@ -353,13 +401,18 @@ function renderChat() {
     if (!text || !currentConversation) return
     const file = fileInput.files?.[0]
     const userMessage: ChatMessage = { id: createId(), role: 'user', content: text, createdAt: Date.now(), attachmentName: file?.name }
-    let imageDataUrl: string | undefined
+    let displayImageUrl: string | undefined
+    let aiImageDataUrl: string | undefined
     if (file) {
       userMessage.content = `${text}\n\n[Файл: ${file.name}]\n${await getFilePreview(file)}`
-      imageDataUrl = await getImageDataUrl(file)
+      const fileImage = await getImageDataUrl(file)
+      if (fileImage) { displayImageUrl = fileImage; aiImageDataUrl = fileImage }
     }
-    if (!imageDataUrl) imageDataUrl = findDocumentImage(text)
-    if (imageDataUrl) userMessage.displayImage = imageDataUrl
+    if (!displayImageUrl) {
+      // показываем фото документа в чате, но не отправляем в AI — поля уже есть в системном промпте
+      displayImageUrl = findDocumentImage(text)
+    }
+    if (displayImageUrl) userMessage.displayImage = displayImageUrl
     currentConversation.messages.push(userMessage)
     currentConversation.updatedAt = Date.now()
     if (currentConversation.title === 'Новая беседа') currentConversation.title = text.slice(0, 40)
@@ -368,7 +421,7 @@ function renderChat() {
       const reply = await requestOpenRouterCompletion({
         model: getCurrentModel(),
         messages: currentConversation.messages,
-        imageDataUrl,
+        imageDataUrl: aiImageDataUrl,
         systemPrompt: buildDocumentSystemPrompt()
       })
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: getCurrentModel() })
@@ -416,6 +469,14 @@ function renderDocuments() {
       </div>
 
       <div class="form-section">
+        <label class="form-label">Теги</label>
+        <div class="tags-editor">
+          <div id="tags-chips" class="tags-chips"></div>
+          <input id="tags-input" class="tags-input" placeholder="Введите тег и нажмите Enter или запятую" />
+        </div>
+      </div>
+
+      <div class="form-section">
         <label class="form-label">Срок действия и напоминание</label>
         <div class="form-row">
           <input id="doc-expires" type="date" />
@@ -432,7 +493,18 @@ function renderDocuments() {
     </form>
   </section>`
 
+  docTags = []
   renderFieldsList([])
+  renderTagChips()
+
+  document.querySelector<HTMLInputElement>('#tags-input')!.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      const val = (e.target as HTMLInputElement).value.trim().replace(/,+$/, '')
+      if (val && !docTags.includes(val)) { docTags.push(val); renderTagChips() }
+      ;(e.target as HTMLInputElement).value = ''
+    }
+  })
 
   document.querySelector<HTMLButtonElement>('#add-field-btn')!.onclick = () => {
     addFieldRow()
@@ -483,12 +555,14 @@ function renderDocuments() {
       title: document.querySelector<HTMLInputElement>('#doc-title')!.value.trim(),
       docType: document.querySelector<HTMLInputElement>('#doc-type')!.value.trim(),
       fields,
+      tags: [...docTags],
       imageDataUrl: docImageDataUrl,
       notifyEnabled: document.querySelector<HTMLInputElement>('#doc-notify')!.checked,
       notifyBeforeDays: Number(document.querySelector<HTMLInputElement>('#doc-notify-days')!.value || '1'),
       expiresAt: document.querySelector<HTMLInputElement>('#doc-expires')!.value || undefined
     })
     docImageDataUrl = undefined
+    docTags = []
     await refreshData()
     renderDocuments()
   }
@@ -529,6 +603,7 @@ function renderBaseList(docs: DocumentRecord[]) {
     const card = document.createElement('article')
     card.className = 'doc-card'
     const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `<div class="doc-field"><span class="doc-field-key">${escapeAttr(k)}</span><span class="doc-field-val">${escapeAttr(String(v))}</span></div>`).join('')
+    const tagsHtml = (d.tags ?? []).length > 0 ? `<div class="doc-tags">${(d.tags!).map((t) => `<span class="tag-chip tag-chip-sm">${escapeAttr(t)}</span>`).join('')}</div>` : ''
     card.innerHTML = `
       <div class="doc-card-header">
         <div>
@@ -537,6 +612,7 @@ function renderBaseList(docs: DocumentRecord[]) {
         </div>
         ${d.expiresAt ? `<span class="doc-expires">до ${d.expiresAt}</span>` : ''}
       </div>
+      ${tagsHtml}
       ${fields ? `<div class="doc-fields">${fields}</div>` : ''}
       ${d.imageDataUrl ? `<img class="doc-image" src="${d.imageDataUrl}" alt="Фото документа" title="Нажмите для просмотра" />` : ''}
     `
@@ -563,6 +639,22 @@ function addFieldRow(key = '', value = '') {
   row.innerHTML = `<input class="field-key" placeholder="Название поля" value="${escapeAttr(key)}" /><input class="field-value" placeholder="Значение" value="${escapeAttr(value)}" /><button type="button" class="field-remove" title="Удалить">✕</button>`
   row.querySelector<HTMLButtonElement>('.field-remove')!.onclick = () => row.remove()
   list.appendChild(row)
+}
+
+function renderTagChips() {
+  const container = document.querySelector<HTMLDivElement>('#tags-chips')
+  if (!container) return
+  container.innerHTML = ''
+  for (const tag of docTags) {
+    const chip = document.createElement('span')
+    chip.className = 'tag-chip'
+    chip.innerHTML = `${escapeAttr(tag)}<button type="button" class="tag-chip-remove" data-tag="${escapeAttr(tag)}">✕</button>`
+    chip.querySelector('button')!.onclick = () => {
+      docTags = docTags.filter((t) => t !== tag)
+      renderTagChips()
+    }
+    container.appendChild(chip)
+  }
 }
 
 function collectFields(): Record<string, string> {
@@ -650,6 +742,7 @@ function buildDocumentSystemPrompt(): string {
     const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `    ${k}: ${v}`).join('\n')
     return [
       `- ${d.title} (${d.docType})`,
+      (d.tags ?? []).length > 0 ? `  Теги: ${d.tags!.join(', ')}` : '',
       d.expiresAt ? `  Срок действия: ${d.expiresAt}` : '',
       d.notifyEnabled ? `  Уведомление: за ${d.notifyBeforeDays} дн.` : '',
       fields ? `  Поля:\n${fields}` : '',

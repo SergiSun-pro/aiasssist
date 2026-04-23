@@ -28,6 +28,7 @@ export interface DocumentRecord {
   title: string
   docType: string
   fields: Record<string, string>
+  tags?: string[]
   imageDataUrl?: string
   notifyEnabled: boolean
   notifyBeforeDays: number

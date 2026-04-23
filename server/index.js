@@ -176,6 +176,7 @@ app.get('/api/documents', async (req, res) => {
   const filtered = db.documents.filter((document) => {
     if (document.title.toLowerCase().includes(query)) return true
     if (document.docType.toLowerCase().includes(query)) return true
+    if ((document.tags ?? []).some((t) => t.toLowerCase().includes(query))) return true
     return Object.entries(document.fields ?? {}).some(
       ([key, value]) => key.toLowerCase().includes(query) || String(value).toLowerCase().includes(query)
     )
@@ -191,7 +192,7 @@ app.get('/api/documents/:id', async (req, res) => {
 })
 
 app.post('/api/documents', async (req, res) => {
-  const { title, docType, fields, imageDataUrl, notifyEnabled, notifyBeforeDays, expiresAt } = req.body ?? {}
+  const { title, docType, fields, tags, imageDataUrl, notifyEnabled, notifyBeforeDays, expiresAt } = req.body ?? {}
   if (!title || !docType) {
     res.status(400).json({ error: 'title и docType обязательны' })
     return
@@ -203,6 +204,7 @@ app.post('/api/documents', async (req, res) => {
     title: String(title),
     docType: String(docType),
     fields: typeof fields === 'object' && fields ? fields : {},
+    tags: Array.isArray(tags) ? tags.map(String).filter(Boolean) : [],
     imageDataUrl: typeof imageDataUrl === 'string' ? imageDataUrl : undefined,
     notifyEnabled: Boolean(notifyEnabled),
     notifyBeforeDays: Number.isFinite(Number(notifyBeforeDays)) ? Number(notifyBeforeDays) : 1,
