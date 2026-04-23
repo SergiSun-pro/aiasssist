@@ -4,6 +4,8 @@ import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login }
 import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
 import { createInstruction, deleteInstruction, listInstructions, updateInstruction } from './instructionsApi'
+import { getSettings, saveSettings } from './settingsApi'
+import type { UserSettings } from './settingsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
 import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Instruction, InstructionStep, TodoItem } from './types'
@@ -44,6 +46,7 @@ function addNotification(text: string) {
   updateNotificationBadge()
 }
 
+let userSettings: UserSettings = {}
 let modelSelect: HTMLSelectElement | undefined
 let contentRoot: HTMLDivElement
 let conversationListEl: HTMLDivElement
@@ -109,6 +112,7 @@ function initApp() {
     </nav>
     <div class="app-user">
       <span class="app-user-name">${currentUser?.username ?? ''}</span>
+      <button id="settings-btn" class="logout-btn" title="Настройки">⚙</button>
       <button id="logout-btn" class="logout-btn" title="Выйти">⎋</button>
     </div>
   </header>
@@ -136,10 +140,12 @@ function initApp() {
   document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
   document.querySelector<HTMLButtonElement>('#tab-instructions')!.addEventListener('click', () => setTab('instructions'))
   document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
+  document.querySelector<HTMLButtonElement>('#settings-btn')!.addEventListener('click', showSettingsModal)
   document.querySelector<HTMLButtonElement>('#logout-btn')!.addEventListener('click', () => { clearToken(); currentUser = null; showLoginForm() })
   if (isAdmin) document.querySelector<HTMLButtonElement>('#tab-users')?.addEventListener('click', () => setTab('users'))
 
   applyTabLayout()
+  getSettings().then((s) => { userSettings = s }).catch(() => {})
   refreshData().finally(() => { render(); updateNotificationBadge() })
   requestNotificationPermission()
   runRemindersAndNotify()
@@ -660,6 +666,88 @@ function renderBaseList(docs: DocumentRecord[]) {
       renderBase()
     }
     list.appendChild(card)
+  }
+}
+
+function showSettingsModal() {
+  const tr = userSettings.todoRules ?? {}
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:600px">
+      <div class="modal-header">
+        <h2>Настройки</h2>
+        <button id="settings-close" class="modal-close">✕</button>
+      </div>
+      <form id="settings-form">
+        <div class="settings-section-label">Правила списка дел</div>
+        <p class="page-subtitle" style="margin:0 0 16px">ИИ использует эти данные чтобы давать персонализированные советы по задачам</p>
+
+        <div class="form-section">
+          <label class="form-label">Откуда берутся мои дела</label>
+          <textarea id="s-sources" class="settings-textarea" placeholder="Например: рабочие задачи в Notion, домашние дела, звонки клиентам...">${escapeAttr(tr.sources ?? '')}</textarea>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Параметры для отслеживания</label>
+          <textarea id="s-params" class="settings-textarea" placeholder="Например: количество звонков, выполненных задач, километров...">${escapeAttr(tr.trackedParams ?? '')}</textarea>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Норма в день (количество единиц)</label>
+          <input id="s-units" placeholder="Например: 5 задач, 3 встречи, 10 000 шагов..." value="${escapeAttr(tr.dailyUnits ?? '')}" />
+        </div>
+        <div class="form-row">
+          <div class="form-section" style="flex:1">
+            <label class="form-label">Что для меня легко</label>
+            <textarea id="s-easy" class="settings-textarea" placeholder="Например: короткие задачи, звонки, рутинные дела...">${escapeAttr(tr.easyTasks ?? '')}</textarea>
+          </div>
+          <div class="form-section" style="flex:1">
+            <label class="form-label">Что для меня сложно</label>
+            <textarea id="s-hard" class="settings-textarea" placeholder="Например: долгие отчёты, срочные дедлайны...">${escapeAttr(tr.hardTasks ?? '')}</textarea>
+          </div>
+        </div>
+        <div class="form-section">
+          <label class="form-label">Общее</label>
+          <textarea id="s-general" class="settings-textarea" placeholder="Любая дополнительная информация о вашем стиле работы...">${escapeAttr(tr.general ?? '')}</textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Сохранить</button>
+          <button type="button" id="settings-cancel" class="btn-secondary">Отмена</button>
+        </div>
+        <p id="settings-status" class="login-error hidden"></p>
+      </form>
+    </div>`
+
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.querySelector('#settings-close')!.addEventListener('click', close)
+  overlay.querySelector('#settings-cancel')!.addEventListener('click', close)
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+
+  overlay.querySelector<HTMLFormElement>('#settings-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const statusEl = overlay.querySelector<HTMLParagraphElement>('#settings-status')!
+    const val = (id: string) => overlay.querySelector<HTMLInputElement | HTMLTextAreaElement>(id)!.value.trim()
+    try {
+      userSettings = await saveSettings({
+        todoRules: {
+          sources: val('#s-sources'),
+          trackedParams: val('#s-params'),
+          dailyUnits: val('#s-units'),
+          easyTasks: val('#s-easy'),
+          hardTasks: val('#s-hard'),
+          general: val('#s-general')
+        }
+      })
+      statusEl.textContent = '✓ Сохранено'
+      statusEl.style.color = 'var(--accent)'
+      statusEl.classList.remove('hidden')
+      setTimeout(() => close(), 800)
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : 'Ошибка сохранения'
+      statusEl.style.color = ''
+      statusEl.classList.remove('hidden')
+    }
   }
 }
 
@@ -1272,8 +1360,20 @@ function buildDocumentSystemPrompt(): string {
     return [`📋 ${instr.title}${instr.tags.length ? ` [${instr.tags.join(', ')}]` : ''}`, steps].filter(Boolean).join('\n')
   }).join('\n\n')
 
+  const tr = userSettings.todoRules
+  const todoRulesText = tr && Object.values(tr).some(Boolean) ? [
+    'ПРАВИЛА СПИСКА ДЕЛ ПОЛЬЗОВАТЕЛЯ:',
+    tr.sources ? `Откуда берутся дела: ${tr.sources}` : '',
+    tr.trackedParams ? `Параметры для отслеживания: ${tr.trackedParams}` : '',
+    tr.dailyUnits ? `Норма в день: ${tr.dailyUnits}` : '',
+    tr.easyTasks ? `Что легко: ${tr.easyTasks}` : '',
+    tr.hardTasks ? `Что сложно: ${tr.hardTasks}` : '',
+    tr.general ? `Общее: ${tr.general}` : ''
+  ].filter(Boolean).join('\n') : ''
+
   return [
     'Ты персональный ассистент.',
+    todoRulesText,
     'ДОКУМЕНТЫ ПОЛЬЗОВАТЕЛЯ:',
     docLines || 'нет',
     todoLines ? `АКТИВНЫЕ НАПОМИНАНИЯ:\n${todoLines}` : '',

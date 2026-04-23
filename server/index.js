@@ -369,6 +369,23 @@ app.post('/api/documents/extract', async (req, res) => {
   }
 })
 
+// === USER SETTINGS ===
+
+app.get('/api/settings', async (req, res) => {
+  const users = await readUsers()
+  const user = users.find((u) => u.id === req.user.id)
+  res.json({ settings: user?.settings ?? {} })
+})
+
+app.put('/api/settings', async (req, res) => {
+  const users = await readUsers()
+  const user = users.find((u) => u.id === req.user.id)
+  if (!user) { res.status(404).json({ error: 'Пользователь не найден' }); return }
+  user.settings = { ...(user.settings ?? {}), ...req.body }
+  await writeUsers(users)
+  res.json({ settings: user.settings })
+})
+
 // === INSTRUCTIONS ===
 
 app.get('/api/instructions', async (_req, res) => {

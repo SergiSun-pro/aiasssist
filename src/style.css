@@ -982,6 +982,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .modal-close:hover { background: var(--panel-2); color: var(--text); }
 
+/* === Settings === */
+
+.settings-section-label {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.settings-textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
 /* === Instructions === */
 
 .instructions-list { display: flex; flex-direction: column; gap: 12px; }
