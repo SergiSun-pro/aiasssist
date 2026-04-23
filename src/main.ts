@@ -913,9 +913,7 @@ function renderTodoRow(list: HTMLElement, todo: TodoItem) {
     renderTodos()
     if (checked && todo.documentId) {
       const doc = documents.find((d) => d.id === todo.documentId)
-      if (doc && doc.expiresAt && doc.expiresAt <= new Date().toISOString().slice(0, 10)) {
-        suggestDocumentUpdate(doc)
-      }
+      if (doc) suggestDocumentUpdate(doc)
     }
   })
   list.appendChild(row)
