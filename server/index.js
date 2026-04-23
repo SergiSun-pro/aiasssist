@@ -308,19 +308,22 @@ app.post('/api/reminders/run', async (_req, res) => {
 
 app.post('/api/documents/extract', async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY
-  const imageDataUrl = req.body?.imageDataUrl
-  const model = req.body?.model
+  const { imageDataUrls, imageDataUrl, model } = req.body ?? {}
+  const images = Array.isArray(imageDataUrls) ? imageDataUrls : (imageDataUrl ? [imageDataUrl] : null)
 
   if (!apiKey) {
     res.status(500).json({ error: 'OPENROUTER_API_KEY не задан на сервере' })
     return
   }
-  if (!imageDataUrl || !model) {
-    res.status(400).json({ error: 'Требуются imageDataUrl и model' })
+  if (!images?.length || !model) {
+    res.status(400).json({ error: 'Требуются imageDataUrls и model' })
     return
   }
 
   try {
+    const imageContent = images.map((url) => ({ type: 'image_url', image_url: { url } }))
+    const pageNote = images.length > 1 ? ` Документ состоит из ${images.length} страниц/изображений — объедини данные со всех страниц в один JSON.` : ''
+
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -335,9 +338,9 @@ app.post('/api/documents/extract', async (req, res) => {
             content: [
               {
                 type: 'text',
-                text: 'Извлеки из изображения документа данные в виде JSON: {"title":"название документа","docType":"тип документа","expiresAt":"YYYY-MM-DD или пусто","fields":{"название поля на русском":"значение"}}. Все названия полей и значения должны быть на русском языке. Только валидный JSON без пояснений.'
+                text: `Извлеки из изображений документа данные в виде JSON: {"title":"название документа","docType":"тип документа","expiresAt":"YYYY-MM-DD или пусто","fields":{"название поля на русском":"значение"}}. Все названия полей и значения должны быть на русском языке. Только валидный JSON без пояснений.${pageNote}`
               },
-              { type: 'image_url', image_url: { url: imageDataUrl } }
+              ...imageContent
             ]
           }
         ]

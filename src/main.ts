@@ -1,4 +1,5 @@
 import './style.css'
+import { filesToImageDataUrls, readAsDataUrl } from './pdfUtils'
 import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
 import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
@@ -22,6 +23,7 @@ let documents: DocumentRecord[] = []
 let todos: TodoItem[] = []
 let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' = 'chat'
 let docImageDataUrl: string | undefined
+let docExtractImages: string[] = []
 let docTags: string[] = []
 let notifications: AppNotification[] = loadNotifications()
 let currentUser: AuthUser | null = null
@@ -455,10 +457,10 @@ function renderDocuments() {
         <label class="form-label">Фото документа</label>
         <div id="drop-zone" class="drop-zone">
           <div class="drop-zone-icon">📷</div>
-          <div id="drop-label" class="drop-zone-text">Перетащите фото сюда или нажмите для выбора</div>
-          <input id="doc-image" type="file" accept="image/*" />
+          <div id="drop-label" class="drop-zone-text">Перетащите фото или PDF сюда, или нажмите для выбора<br><span class="drop-hint">Можно выбрать несколько файлов для многостраничных документов</span></div>
+          <input id="doc-image" type="file" accept="image/*,application/pdf" multiple />
         </div>
-        <button id="doc-extract" type="button" class="btn-secondary">✨ Распознать поля с фото</button>
+        <button id="doc-extract" type="button" class="btn-secondary">✨ Распознать поля</button>
       </div>
 
       <div class="form-section">
@@ -503,6 +505,7 @@ function renderDocuments() {
   </section>`
 
   docTags = []
+  docExtractImages = []
   renderFieldsList([])
   renderTagChips()
 
@@ -522,30 +525,38 @@ function renderDocuments() {
   const dropZone = document.querySelector<HTMLDivElement>('#drop-zone')!
   const dropLabel = document.querySelector<HTMLDivElement>('#drop-label')!
 
-  async function handleImageFile(file: File | undefined) {
-    docImageDataUrl = await getImageDataUrl(file)
-    if (file && docImageDataUrl) dropLabel.innerHTML = `✓ Фото выбрано: <strong>${file.name}</strong>`
+  async function handleFiles(files: FileList | File[]) {
+    const arr = Array.from(files).filter((f) => f.type.startsWith('image/') || f.type === 'application/pdf')
+    if (!arr.length) return
+    const btn = document.querySelector<HTMLButtonElement>('#doc-extract')
+    if (btn) { btn.textContent = 'Обрабатываю файлы...'; btn.disabled = true }
+    docExtractImages = await filesToImageDataUrls(arr)
+    const firstImage = arr.find((f) => f.type.startsWith('image/'))
+    docImageDataUrl = firstImage ? await readAsDataUrl(firstImage) : docExtractImages[0]
+    const names = arr.map((f) => f.name).join(', ')
+    const pages = docExtractImages.length
+    dropLabel.innerHTML = `✓ Файлов: <strong>${arr.length}</strong> · Страниц: <strong>${pages}</strong><br><span class="drop-hint">${escapeAttr(names)}</span>`
+    if (btn) { btn.textContent = '✨ Распознать поля'; btn.disabled = false }
   }
 
-  docImageInput.onchange = (e) => handleImageFile((e.target as HTMLInputElement).files?.[0])
+  docImageInput.onchange = (e) => { const files = (e.target as HTMLInputElement).files; if (files) handleFiles(files) }
 
   dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over') })
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'))
   dropZone.addEventListener('drop', async (e) => {
     e.preventDefault()
     dropZone.classList.remove('drag-over')
-    const file = e.dataTransfer?.files?.[0]
-    if (file?.type.startsWith('image/')) await handleImageFile(file)
+    if (e.dataTransfer?.files.length) await handleFiles(e.dataTransfer.files)
   })
   dropZone.addEventListener('click', () => docImageInput.click())
   document.querySelector<HTMLButtonElement>('#doc-extract')!.onclick = async () => {
-    if (!docImageDataUrl) { alert('Сначала выберите фото документа'); return }
+    if (!docExtractImages.length) { alert('Сначала выберите фото или PDF документа'); return }
     const btn = document.querySelector<HTMLButtonElement>('#doc-extract')!
     const extractModel = VISION_MODELS.includes(getCurrentModel()) ? getCurrentModel() : VISION_MODELS[0]
     btn.textContent = 'Распознаю...'
     btn.disabled = true
     try {
-      const parsed = await extractDocument(docImageDataUrl, extractModel)
+      const parsed = await extractDocument(docExtractImages, extractModel)
       ;(document.querySelector<HTMLInputElement>('#doc-title')!).value = parsed.title
       ;(document.querySelector<HTMLInputElement>('#doc-type')!).value = parsed.docType
       ;(document.querySelector<HTMLInputElement>('#doc-expires')!).value = parsed.expiresAt ?? ''
@@ -553,7 +564,7 @@ function renderDocuments() {
     } catch (error) {
       alert(`Ошибка распознавания: ${error instanceof Error ? error.message : 'неизвестная ошибка'}`)
     } finally {
-      btn.textContent = 'Распознать поля с фото'
+      btn.textContent = '✨ Распознать поля'
       btn.disabled = false
     }
   }
@@ -571,6 +582,7 @@ function renderDocuments() {
       expiresAt: document.querySelector<HTMLInputElement>('#doc-expires')!.value || undefined
     })
     docImageDataUrl = undefined
+    docExtractImages = []
     docTags = []
     await refreshData()
     renderDocuments()

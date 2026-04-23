@@ -74,7 +74,7 @@ export async function deleteDocument(id: string): Promise<void> {
   await parseResponse<{ ok: true }>(response)
 }
 
-export async function extractDocument(imageDataUrl: string, model: string): Promise<{
+export async function extractDocument(imageDataUrls: string[], model: string): Promise<{
   title: string
   docType: string
   fields: Record<string, string>
@@ -83,7 +83,7 @@ export async function extractDocument(imageDataUrl: string, model: string): Prom
   const response = await authFetch('/api/documents/extract', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageDataUrl, model })
+    body: JSON.stringify({ imageDataUrls, model })
   })
   return parseResponse<{
     title: string
