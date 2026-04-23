@@ -75,7 +75,7 @@ async function ensureDb() {
   try {
     await fs.access(DB_PATH)
   } catch {
-    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [] }, null, 2), 'utf8')
+    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [], tasks: [] }, null, 2), 'utf8')
   }
 }
 
@@ -86,7 +86,8 @@ async function readDb() {
   return {
     documents: Array.isArray(parsed.documents) ? parsed.documents : [],
     todos: Array.isArray(parsed.todos) ? parsed.todos : [],
-    instructions: Array.isArray(parsed.instructions) ? parsed.instructions : []
+    instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
+    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : []
   }
 }
 
@@ -367,6 +368,57 @@ app.post('/api/documents/extract', async (req, res) => {
       error: error instanceof Error ? error.message : 'Ошибка распознавания документа'
     })
   }
+})
+
+// === TASKS ===
+
+app.get('/api/tasks', async (_req, res) => {
+  const db = await readDb()
+  res.json({ tasks: db.tasks })
+})
+
+app.post('/api/tasks', async (req, res) => {
+  const { title, type, weight, context, conditions, deadline, scheduledDate, scheduledTime, recurrence, onMissed, accumulation, chainId, chainOrder, done, skipped, notes } = req.body ?? {}
+  if (!title) { res.status(400).json({ error: 'title обязателен' }); return }
+  const db = await readDb()
+  const task = {
+    id: createId(), title: String(title),
+    type: ['fixed','flexible','periodic'].includes(type) ? type : 'flexible',
+    weight: Number.isFinite(Number(weight)) ? Number(weight) : 1,
+    context: String(context ?? ''), conditions: String(conditions ?? ''),
+    deadline: normalizeDate(deadline), scheduledDate: normalizeDate(scheduledDate),
+    scheduledTime: scheduledTime ?? undefined, recurrence: recurrence ?? undefined,
+    onMissed: ['skip','accumulate','reschedule'].includes(onMissed) ? onMissed : 'reschedule',
+    accumulation: Number(accumulation) || 0,
+    chainId: chainId ?? undefined, chainOrder: chainOrder ?? undefined,
+    done: Boolean(done), skipped: Boolean(skipped),
+    notes: String(notes ?? ''), createdAt: Date.now(), updatedAt: Date.now()
+  }
+  db.tasks.unshift(task)
+  await writeDb(db)
+  res.json({ task })
+})
+
+app.patch('/api/tasks/:id', async (req, res) => {
+  const db = await readDb()
+  const task = db.tasks.find((t) => t.id === req.params.id)
+  if (!task) { res.status(404).json({ error: 'Задача не найдена' }); return }
+  const fields = ['title','type','weight','context','conditions','scheduledTime','recurrence','onMissed','accumulation','chainId','chainOrder','done','skipped','notes']
+  for (const f of fields) if (req.body[f] !== undefined) task[f] = req.body[f]
+  if (req.body.deadline !== undefined) task.deadline = normalizeDate(req.body.deadline)
+  if (req.body.scheduledDate !== undefined) task.scheduledDate = normalizeDate(req.body.scheduledDate)
+  task.updatedAt = Date.now()
+  await writeDb(db)
+  res.json({ task })
+})
+
+app.delete('/api/tasks/:id', async (req, res) => {
+  const db = await readDb()
+  const idx = db.tasks.findIndex((t) => t.id === req.params.id)
+  if (idx === -1) { res.status(404).json({ error: 'Задача не найдена' }); return }
+  db.tasks.splice(idx, 1)
+  await writeDb(db)
+  res.json({ ok: true })
 })
 
 // === USER SETTINGS ===

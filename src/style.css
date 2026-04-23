@@ -982,6 +982,113 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .modal-close:hover { background: var(--panel-2); color: var(--text); }
 
+/* === Tasks === */
+
+.tasks-sub-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
+.tasks-sub-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 16px; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; margin-bottom: -1px; }
+.tasks-sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tasks-sub-tab:hover { color: var(--text); }
+.tasks-badge { background: var(--accent-soft); color: var(--accent); border-radius: 99px; padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+
+.tasks-group-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 0 8px; }
+.tasks-group-label:first-child { margin-top: 0; }
+
+.task-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  background: var(--panel);
+  transition: box-shadow 0.15s;
+}
+.task-card:hover { box-shadow: var(--shadow-sm); }
+.task-card.task-status-overdue { border-left: 3px solid #ef4444; }
+.task-card.task-status-soon { border-left: 3px solid #f59e0b; }
+.task-card.task-done { opacity: 0.5; }
+.task-card.task-skipped { opacity: 0.4; text-decoration: line-through; }
+
+.task-card-row { display: flex; align-items: flex-start; gap: 10px; }
+.task-check-label { display: flex; align-items: center; padding-top: 2px; flex-shrink: 0; cursor: pointer; }
+.task-card-body { flex: 1; min-width: 0; }
+.task-card-title { font-size: 14px; font-weight: 500; color: var(--text); word-break: break-word; }
+.task-card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.task-card-actions-inline { display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+.task-card:hover .task-card-actions-inline { opacity: 1; }
+
+.task-accum { background: #fef3c7; color: #92400e; border-radius: 4px; padding: 0 5px; font-size: 11px; font-weight: 600; }
+
+.task-type-badge { border-radius: 99px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+.task-type-fixed { background: #dbeafe; color: #1d4ed8; }
+.task-type-flexible { background: #dcfce7; color: #15803d; }
+.task-type-periodic { background: #f3e8ff; color: #7c3aed; }
+
+.task-weight { background: var(--panel-2); border-radius: 4px; padding: 1px 6px; }
+.task-deadline-overdue { color: #ef4444; font-weight: 600; }
+.task-deadline-soon { color: #f59e0b; font-weight: 600; }
+
+/* Calendar */
+.calendar-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.calendar-week-label { flex: 1; text-align: center; font-weight: 600; font-size: 15px; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+
+.calendar-day {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  min-height: 120px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+.calendar-day.today { border-color: var(--accent); background: var(--accent-soft); }
+
+.calendar-day-header { display: flex; flex-direction: column; align-items: center; margin-bottom: 4px; }
+.cal-day-name { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); }
+.cal-day-num { font-size: 18px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.cal-day-num.today { color: var(--accent); }
+
+.cal-units { font-size: 11px; text-align: center; color: var(--muted); }
+.cal-units.over-limit { color: #ef4444; font-weight: 600; }
+
+.cal-tasks { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.cal-task-chip { font-size: 11px; padding: 2px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-task-chip.task-type-fixed { background: #dbeafe; color: #1d4ed8; }
+.cal-task-chip.task-type-flexible { background: #dcfce7; color: #15803d; }
+.cal-task-chip.task-type-periodic { background: #f3e8ff; color: #7c3aed; }
+.cal-task-chip:hover { opacity: 0.8; }
+
+.cal-add-btn { background: none; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); font-size: 16px; cursor: pointer; width: 100%; padding: 2px; margin-top: auto; }
+.cal-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Task proposal in chat */
+.task-proposal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin: 6px 0 10px 0;
+  max-width: 500px;
+}
+.task-proposal-header { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+.task-proposal-icon { font-size: 16px; }
+.task-proposal-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.task-proposal-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.task-proposal-notes { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; border-left: 3px solid var(--accent-soft); padding-left: 8px; }
+.task-proposal-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* Daily review */
+.review-list { display: flex; flex-direction: column; gap: 8px; }
+.review-row { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; background: var(--panel); }
+.review-row-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; font-weight: 500; }
+.review-row-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.review-row-actions.hidden { display: none; }
+.rv-btn { padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.rv-btn:hover { border-color: var(--accent); color: var(--accent); }
+.rv-btn.rv-active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.rv-date { font-size: 13px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); }
+
 /* === Settings === */
 
 .settings-section-label {

@@ -4,11 +4,12 @@ import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login }
 import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
 import { createInstruction, deleteInstruction, listInstructions, updateInstruction } from './instructionsApi'
+import { createTask, deleteTask, listTasks, updateTask } from './tasksApi'
 import { getSettings, saveSettings } from './settingsApi'
 import type { UserSettings } from './settingsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
-import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Instruction, InstructionStep, TodoItem } from './types'
+import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Instruction, InstructionStep, OnMissed, ScheduledTask, TaskType, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
@@ -27,7 +28,11 @@ let todos: TodoItem[] = []
 let instructions: Instruction[] = []
 let instructionSubView: 'list' | 'add' | 'edit' | 'view' = 'list'
 let activeInstruction: Instruction | null = null
-let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' = 'chat'
+let tasks: ScheduledTask[] = []
+let tasksSubView: 'backlog' | 'calendar' | 'review' | 'form' = 'backlog'
+let editingTask: ScheduledTask | null = null
+let calendarWeekOffset = 0
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks' = 'chat'
 let docImageDataUrl: string | undefined
 let docExtractImages: string[] = []
 let docTags: string[] = []
@@ -106,6 +111,7 @@ function initApp() {
       <button id="tab-docs" class="nav-tab" data-label="Документы"><span class="nav-icon">📄</span><span class="nav-label">Документы</span></button>
       <button id="tab-base" class="nav-tab" data-label="База"><span class="nav-icon">📚</span><span class="nav-label">База</span></button>
       <button id="tab-todos" class="nav-tab" data-label="Дела"><span class="nav-icon">✓</span><span class="nav-label">Дела</span></button>
+      <button id="tab-tasks" class="nav-tab" data-label="Задачи"><span class="nav-icon">📅</span><span class="nav-label">Задачи</span></button>
       <button id="tab-instructions" class="nav-tab" data-label="Инструкции"><span class="nav-icon">📋</span><span class="nav-label">Инструкции</span></button>
       <button id="tab-notifications" class="nav-tab tab-notify" data-label="Уведомления"><span class="nav-icon">🔔</span><span class="nav-label">Уведомления</span><span id="notify-badge" class="notify-badge hidden"></span></button>
       ${isAdmin ? '<button id="tab-users" class="nav-tab" data-label="Пользователи"><span class="nav-icon">👥</span><span class="nav-label">Пользователи</span></button>' : ''}
@@ -138,6 +144,7 @@ function initApp() {
   document.querySelector<HTMLButtonElement>('#tab-docs')!.addEventListener('click', () => setTab('documents'))
   document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
   document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
+  document.querySelector<HTMLButtonElement>('#tab-tasks')!.addEventListener('click', () => setTab('tasks'))
   document.querySelector<HTMLButtonElement>('#tab-instructions')!.addEventListener('click', () => setTab('instructions'))
   document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
   document.querySelector<HTMLButtonElement>('#settings-btn')!.addEventListener('click', showSettingsModal)
@@ -161,10 +168,10 @@ function applyTabLayout() {
 
 checkAuthAndInit()
 
-function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions') {
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks') {
   activeTab = tab
   document.querySelectorAll('.nav-tab').forEach((el) => el.classList.remove('active'))
-  const tabId = tab === 'documents' ? 'docs' : tab
+  const tabId = tab === 'documents' ? 'docs' : tab === 'notifications' ? 'notifications' : tab
   document.querySelector(`#tab-${tabId}`)?.classList.add('active')
   if (tab === 'notifications') {
     updateNotificationBadge()
@@ -180,6 +187,7 @@ function render() {
   if (activeTab === 'base') renderBase()
   if (activeTab === 'todos') renderTodos()
   if (activeTab === 'notifications') renderNotifications()
+  if (activeTab === 'tasks') renderTasksSection()
   if (activeTab === 'instructions') renderInstructions()
   if (activeTab === 'users') renderUsers()
 }
@@ -396,6 +404,39 @@ function renderChat() {
     }
     item.querySelector('pre')!.textContent = m.content
     messagesEl.appendChild(item)
+    if (m.taskProposal) {
+      const p = m.taskProposal as Record<string, unknown>
+      const card = document.createElement('div')
+      card.className = 'task-proposal-card'
+      const typeLabels: Record<string, string> = { fixed: 'Фиксированная', flexible: 'Гибкая', periodic: 'Периодическая' }
+card.innerHTML = `<div class="task-proposal-header"><span class="task-proposal-icon">📋</span><span>Предлагаемая задача</span></div>
+        <div class="task-proposal-title">${escapeAttr(String(p.title ?? ''))}</div>
+        <div class="task-proposal-meta">
+          <span class="task-type-badge task-type-${p.type}">${typeLabels[String(p.type)] ?? String(p.type)}</span>
+          <span>${p.weight ?? 1} ед.</span>
+          ${p.scheduledDate ? `<span>📅 ${p.scheduledDate}</span>` : ''}
+          ${p.deadline ? `<span>⏰ до ${p.deadline}</span>` : ''}
+          ${p.context ? `<span>📍 ${escapeAttr(String(p.context))}</span>` : ''}
+        </div>
+        ${p.notes ? `<div class="task-proposal-notes">${escapeAttr(String(p.notes))}</div>` : ''}
+        <div class="task-proposal-actions">
+          <button class="btn-primary task-proposal-save">✓ Добавить задачу</button>
+          <button class="btn-secondary task-proposal-edit">✏ Изменить</button>
+          <button class="btn-secondary task-proposal-dismiss">✕</button>
+        </div>`
+      card.querySelector('.task-proposal-save')!.addEventListener('click', async () => {
+        await createTask(p as Parameters<typeof createTask>[0])
+        await refreshData()
+        card.innerHTML = '<div style="padding:8px 12px;color:var(--accent);font-size:13px">✓ Задача добавлена</div>'
+      })
+      card.querySelector('.task-proposal-edit')!.addEventListener('click', () => {
+        editingTask = null; tasksSubView = 'form'
+        Object.assign(editingTask = { id: '', createdAt: 0, updatedAt: 0, done: false, skipped: false, accumulation: 0, notes: '', context: '', conditions: '' } as ScheduledTask, p)
+        setTab('tasks')
+      })
+      card.querySelector('.task-proposal-dismiss')!.addEventListener('click', () => card.remove())
+      messagesEl.appendChild(card)
+    }
   }
   messagesEl.scrollTop = messagesEl.scrollHeight
 
@@ -448,7 +489,16 @@ function renderChat() {
         imageDataUrl: aiImageDataUrl,
         systemPrompt: buildDocumentSystemPrompt()
       })
-      currentConversation.messages.push({ id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: getCurrentModel() })
+      const taskMatch = reply.match(/\[TASK\]([\s\S]*?)\[\/TASK\]/)
+      const cleanReply = reply.replace(/\[TASK\][\s\S]*?\[\/TASK\]/, '').trim()
+      const aiMsg: ChatMessage = { id: createId(), role: 'assistant', content: cleanReply, createdAt: Date.now(), model: getCurrentModel() }
+      if (taskMatch) {
+        try {
+          const parsed = JSON.parse(taskMatch[1].trim())
+          aiMsg.taskProposal = parsed
+        } catch { /* invalid JSON, ignore */ }
+      }
+      currentConversation.messages.push(aiMsg)
     } catch (error) {
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: `Ошибка: ${error instanceof Error ? error.message : 'Unknown error'}`, createdAt: Date.now() })
     }
@@ -954,6 +1004,361 @@ function addFieldRow(key = '', value = '') {
   list.appendChild(row)
 }
 
+// ===================== TASKS =====================
+
+const TASK_TYPE_LABELS: Record<TaskType, string> = { fixed: 'Фиксированная', flexible: 'Гибкая', periodic: 'Периодическая' }
+const ON_MISSED_LABELS: Record<OnMissed, string> = { skip: 'Пропустить', accumulate: 'Накопить', reschedule: 'Перенести' }
+
+function todayStr() { return new Date().toISOString().slice(0, 10) }
+function dayStr(d: Date) { return d.toISOString().slice(0, 10) }
+function addDays(base: Date, n: number) { const d = new Date(base); d.setDate(d.getDate() + n); return d }
+
+function taskDeadlineStatus(task: ScheduledTask): 'overdue' | 'soon' | 'ok' {
+  if (!task.deadline) return 'ok'
+  const today = todayStr()
+  if (task.deadline < today) return 'overdue'
+  const diff = (new Date(task.deadline).getTime() - new Date(today).getTime()) / 86400000
+  if (diff <= 3) return 'soon'
+  return 'ok'
+}
+
+function renderTasksSection() {
+  if (tasksSubView === 'form') { renderTaskForm(editingTask ?? undefined); return }
+  if (tasksSubView === 'review') { renderDailyReview(); return }
+
+  const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
+  const today = todayStr()
+  const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
+  const todayTasks = tasks.filter((t) => t.scheduledDate === today && !t.done && !t.skipped)
+  const todayUnits = todayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
+
+  contentRoot.innerHTML = `<section class="documents tasks-section">
+    <div class="page-header-row">
+      <div><h2>Задачи</h2><p class="page-subtitle">Бэклог: ${backlog.length} · Сегодня: ${todayTasks.length}${dailyLimit ? ` · ${todayUnits}/${dailyLimit} ед.` : ''}</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня</button>
+        <button id="tasks-add-btn" class="btn-primary">+ Задача</button>
+      </div>
+    </div>
+    <div class="tasks-sub-tabs">
+      <button id="tasks-tab-backlog" class="tasks-sub-tab ${tasksSubView === 'backlog' ? 'active' : ''}">Общий список <span class="tasks-badge">${backlog.length}</span></button>
+      <button id="tasks-tab-calendar" class="tasks-sub-tab ${tasksSubView === 'calendar' ? 'active' : ''}">Календарь</button>
+    </div>
+    <div id="tasks-content"></div>
+  </section>`
+
+  document.querySelector('#tasks-add-btn')!.addEventListener('click', () => { editingTask = null; tasksSubView = 'form'; renderTasksSection() })
+  document.querySelector('#tasks-review-btn')!.addEventListener('click', () => { tasksSubView = 'review'; renderTasksSection() })
+  document.querySelector('#tasks-tab-backlog')!.addEventListener('click', () => { tasksSubView = 'backlog'; renderTasksSection() })
+  document.querySelector('#tasks-tab-calendar')!.addEventListener('click', () => { tasksSubView = 'calendar'; renderTasksSection() })
+
+  if (tasksSubView === 'calendar') renderCalendarView()
+  else renderBacklogView()
+}
+
+function renderBacklogView() {
+  const container = document.querySelector<HTMLDivElement>('#tasks-content')!
+  const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
+  const scheduled = tasks.filter((t) => t.scheduledDate && !t.done && !t.skipped)
+  const done = tasks.filter((t) => t.done || t.skipped)
+
+  const renderGroup = (label: string, items: ScheduledTask[]) => {
+    if (!items.length) return ''
+    return `<div class="tasks-group-label">${label}</div>${items.map((t) => renderTaskCard(t)).join('')}`
+  }
+
+  const overdue = backlog.filter((t) => taskDeadlineStatus(t) === 'overdue')
+  const soon = backlog.filter((t) => taskDeadlineStatus(t) === 'soon')
+  const normal = backlog.filter((t) => taskDeadlineStatus(t) === 'ok')
+
+  container.innerHTML = `
+    ${renderGroup('🔴 Просрочен дедлайн', overdue)}
+    ${renderGroup('🟡 Дедлайн скоро', soon)}
+    ${renderGroup('Без даты', normal)}
+    ${renderGroup('📅 Запланировано', scheduled)}
+    ${done.length ? `<div class="tasks-group-label">✓ Выполнено</div>${done.slice(0, 5).map((t) => renderTaskCard(t, true)).join('')}` : ''}
+    ${!tasks.length ? '<p class="hint">Задач пока нет. Добавьте первую или обсудите с ИИ в чате.</p>' : ''}
+  `
+  container.querySelectorAll<HTMLElement>('[data-task-id]').forEach((el) => wireTaskCard(el))
+}
+
+function renderTaskCard(task: ScheduledTask, compact = false): string {
+  const status = taskDeadlineStatus(task)
+  const totalWeight = task.weight + task.accumulation
+  return `<div class="task-card task-status-${status}${task.done ? ' task-done' : ''}${task.skipped ? ' task-skipped' : ''}" data-task-id="${task.id}">
+    <div class="task-card-row">
+      <label class="task-check-label">
+        <input type="checkbox" class="task-check" ${task.done ? 'checked' : ''} />
+      </label>
+      <div class="task-card-body">
+        <div class="task-card-title">${escapeAttr(task.title)}${task.accumulation > 0 ? ` <span class="task-accum">+${task.accumulation}ед.</span>` : ''}</div>
+        ${!compact ? `<div class="task-card-meta">
+          <span class="task-type-badge task-type-${task.type}">${TASK_TYPE_LABELS[task.type]}</span>
+          <span class="task-weight">${totalWeight} ед.</span>
+          ${task.scheduledDate ? `<span>📅 ${task.scheduledDate}${task.scheduledTime ? ' ' + task.scheduledTime : ''}</span>` : ''}
+          ${task.deadline ? `<span class="task-deadline-${status}">⏰ ${task.deadline}</span>` : ''}
+          ${task.context ? `<span>📍 ${escapeAttr(task.context)}</span>` : ''}
+        </div>` : ''}
+      </div>
+      <div class="task-card-actions-inline">
+        <button class="task-btn-edit conv-action-btn" data-id="${task.id}" title="Редактировать">✏</button>
+        <button class="task-btn-delete conv-action-btn conv-delete-btn" data-id="${task.id}" title="Удалить">✕</button>
+      </div>
+    </div>
+  </div>`
+}
+
+function wireTaskCard(el: HTMLElement) {
+  const id = el.dataset.taskId!
+  const task = tasks.find((t) => t.id === id)!
+  el.querySelector<HTMLInputElement>('.task-check')?.addEventListener('change', async (e) => {
+    await updateTask(id, { done: (e.target as HTMLInputElement).checked })
+    await refreshData(); renderTasksSection()
+  })
+  el.querySelector<HTMLButtonElement>('.task-btn-edit')?.addEventListener('click', () => {
+    editingTask = task; tasksSubView = 'form'; renderTasksSection()
+  })
+  el.querySelector<HTMLButtonElement>('.task-btn-delete')?.addEventListener('click', async () => {
+    if (!confirm(`Удалить задачу «${task.title}»?`)) return
+    await deleteTask(id); await refreshData(); renderTasksSection()
+  })
+}
+
+function renderCalendarView() {
+  const container = document.querySelector<HTMLDivElement>('#tasks-content')!
+  const weekStart = addDays(new Date(), calendarWeekOffset * 7 - new Date().getDay() + 1)
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
+
+  const nav = `<div class="calendar-nav">
+    <button id="cal-prev" class="btn-secondary">← Предыдущая</button>
+    <span class="calendar-week-label">${weekStart.toLocaleDateString('ru', { day: 'numeric', month: 'long' })} – ${days[6].toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+    <button id="cal-next" class="btn-secondary">Следующая →</button>
+    ${calendarWeekOffset !== 0 ? '<button id="cal-today" class="btn-secondary">Сегодня</button>' : ''}
+  </div>`
+
+  const grid = `<div class="calendar-grid">${days.map((day) => {
+    const ds = dayStr(day)
+    const dayTasks = tasks.filter((t) => t.scheduledDate === ds && !t.done && !t.skipped)
+    const units = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
+    const isToday = ds === todayStr()
+    const overLimit = dailyLimit > 0 && units > dailyLimit
+    return `<div class="calendar-day ${isToday ? 'today' : ''}" data-date="${ds}">
+      <div class="calendar-day-header">
+        <span class="cal-day-name">${day.toLocaleDateString('ru', { weekday: 'short' })}</span>
+        <span class="cal-day-num ${isToday ? 'today' : ''}">${day.getDate()}</span>
+      </div>
+      ${dailyLimit ? `<div class="cal-units ${overLimit ? 'over-limit' : ''}">${units}/${dailyLimit} ед.</div>` : units > 0 ? `<div class="cal-units">${units} ед.</div>` : ''}
+      <div class="cal-tasks">${dayTasks.map((t) => `<div class="cal-task-chip task-type-${t.type}" data-task-id="${t.id}" title="${escapeAttr(t.title)}">${escapeAttr(t.title.slice(0, 22))}${t.title.length > 22 ? '…' : ''}</div>`).join('')}</div>
+      <button class="cal-add-btn" data-date="${ds}" title="Добавить задачу на ${ds}">+</button>
+    </div>`
+  }).join('')}</div>`
+
+  container.innerHTML = nav + grid
+  document.querySelector('#cal-prev')!.addEventListener('click', () => { calendarWeekOffset--; renderCalendarView() })
+  document.querySelector('#cal-next')!.addEventListener('click', () => { calendarWeekOffset++; renderCalendarView() })
+  document.querySelector('#cal-today')?.addEventListener('click', () => { calendarWeekOffset = 0; renderCalendarView() })
+  container.querySelectorAll<HTMLElement>('.cal-task-chip[data-task-id]').forEach((chip) => {
+    const task = tasks.find((t) => t.id === chip.dataset.taskId)
+    if (task) chip.addEventListener('click', () => { editingTask = task; tasksSubView = 'form'; renderTasksSection() })
+  })
+  container.querySelectorAll<HTMLButtonElement>('.cal-add-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editingTask = { scheduledDate: btn.dataset.date } as ScheduledTask
+      tasksSubView = 'form'; renderTasksSection()
+    })
+  })
+}
+
+function renderTaskForm(task?: ScheduledTask) {
+  const isEdit = !!(task?.id)
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button id="task-form-back" class="btn-secondary">← Назад</button>
+        <h2 style="margin:0">${isEdit ? 'Редактировать задачу' : 'Новая задача'}</h2>
+      </div>
+    </div>
+    <form id="task-form" class="doc-form">
+      <div class="form-section">
+        <label class="form-label">Название задачи</label>
+        <input id="tf-title" placeholder="Что нужно сделать?" value="${escapeAttr(task?.title ?? '')}" required />
+      </div>
+      <div class="form-row">
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Тип</label>
+          <select id="tf-type">
+            ${(['fixed','flexible','periodic'] as TaskType[]).map((t) => `<option value="${t}" ${task?.type === t ? 'selected' : ''}>${TASK_TYPE_LABELS[t]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Сложность (ед.)</label>
+          <input id="tf-weight" type="number" min="0.5" step="0.5" value="${task?.weight ?? 1}" />
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">При пропуске</label>
+          <select id="tf-onmissed">
+            ${(['skip','accumulate','reschedule'] as OnMissed[]).map((v) => `<option value="${v}" ${task?.onMissed === v ? 'selected' : ''}>${ON_MISSED_LABELS[v]}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Запланировано на</label>
+          <input id="tf-date" type="date" value="${task?.scheduledDate ?? ''}" />
+        </div>
+        <div class="form-section" style="flex:0 0 120px">
+          <label class="form-label">Время</label>
+          <input id="tf-time" type="time" value="${task?.scheduledTime ?? ''}" />
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Дедлайн</label>
+          <input id="tf-deadline" type="date" value="${task?.deadline ?? ''}" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Контекст (где)</label>
+          <input id="tf-context" placeholder="Дома, в офисе, на улице..." value="${escapeAttr(task?.context ?? '')}" />
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Условия</label>
+          <input id="tf-conditions" placeholder="Нужен интернет, тихая обстановка..." value="${escapeAttr(task?.conditions ?? '')}" />
+        </div>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Повторение (для периодической)</label>
+        <select id="tf-recurrence">
+          <option value="">Без повторения</option>
+          <option value="daily" ${task?.recurrence === 'daily' ? 'selected' : ''}>Каждый день</option>
+          <option value="weekly" ${task?.recurrence === 'weekly' ? 'selected' : ''}>Каждую неделю</option>
+          <option value="monthly" ${task?.recurrence === 'monthly' ? 'selected' : ''}>Каждый месяц</option>
+        </select>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Заметки</label>
+        <textarea id="tf-notes" rows="3" placeholder="Дополнительные детали...">${escapeAttr(task?.notes ?? '')}</textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">${isEdit ? 'Сохранить' : 'Создать задачу'}</button>
+        <button type="button" id="task-form-cancel" class="btn-secondary">Отмена</button>
+      </div>
+      <p id="task-form-error" class="login-error hidden"></p>
+    </form>
+  </section>`
+
+  const goBack = () => { tasksSubView = 'backlog'; editingTask = null; renderTasksSection() }
+  document.querySelector('#task-form-back')!.addEventListener('click', goBack)
+  document.querySelector('#task-form-cancel')!.addEventListener('click', goBack)
+  document.querySelector<HTMLFormElement>('#task-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id)!).value.trim()
+    const errEl = document.querySelector<HTMLParagraphElement>('#task-form-error')!
+    try {
+      const payload = {
+        title: v('#tf-title'), type: v('#tf-type') as TaskType,
+        weight: parseFloat(v('#tf-weight')) || 1,
+        onMissed: v('#tf-onmissed') as OnMissed,
+        scheduledDate: v('#tf-date') || undefined,
+        scheduledTime: v('#tf-time') || undefined,
+        deadline: v('#tf-deadline') || undefined,
+        context: v('#tf-context'), conditions: v('#tf-conditions'),
+        recurrence: v('#tf-recurrence') || undefined,
+        notes: v('#tf-notes'),
+        done: false, skipped: false, accumulation: 0
+      }
+      if (isEdit && task?.id) await updateTask(task.id, payload)
+      else await createTask(payload)
+      await refreshData(); goBack()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка'
+      errEl.classList.remove('hidden')
+    }
+  }
+}
+
+function renderDailyReview() {
+  const yesterday = dayStr(addDays(new Date(), -1))
+  const yesterdayTasks = tasks.filter((t) => t.scheduledDate === yesterday)
+
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button id="review-back" class="btn-secondary">← Назад</button>
+        <div><h2 style="margin:0">Итог дня</h2><p class="page-subtitle" style="margin:0">${new Date(yesterday).toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}</p></div>
+      </div>
+    </div>
+    ${yesterdayTasks.length === 0 ? '<p class="hint">Вчера задач не было запланировано.</p>' : `
+    <div id="review-list" class="review-list"></div>
+    <div class="form-actions" style="margin-top:20px">
+      <button id="review-submit" class="btn-primary">Завершить итог →</button>
+    </div>`}
+  </section>`
+
+  document.querySelector('#review-back')!.addEventListener('click', () => { tasksSubView = 'backlog'; renderTasksSection() })
+  if (!yesterdayTasks.length) return
+
+  const list = document.querySelector<HTMLDivElement>('#review-list')!
+  const decisions: Record<string, { action: 'done' | 'skip' | 'accumulate' | 'reschedule'; date?: string }> = {}
+  yesterdayTasks.forEach((t) => { decisions[t.id] = { action: t.done ? 'done' : 'reschedule' } })
+
+  const renderReviewList = () => {
+    list.innerHTML = ''
+    yesterdayTasks.forEach((task) => {
+      const dec = decisions[task.id]
+      const row = document.createElement('div')
+      row.className = 'review-row'
+      row.innerHTML = `
+        <div class="review-row-title">
+          <label class="task-check-label"><input type="checkbox" class="rv-done-check" ${dec.action === 'done' ? 'checked' : ''} /></label>
+          <span>${escapeAttr(task.title)} <span class="task-weight">${task.weight} ед.</span></span>
+        </div>
+        <div class="review-row-actions ${dec.action === 'done' ? 'hidden' : ''}">
+          <button class="rv-btn ${dec.action === 'skip' ? 'rv-active' : ''}" data-action="skip">Пропустить</button>
+          <button class="rv-btn ${dec.action === 'accumulate' ? 'rv-active' : ''}" data-action="accumulate">Накопить</button>
+          <button class="rv-btn ${dec.action === 'reschedule' ? 'rv-active' : ''}" data-action="reschedule">Перенести</button>
+          ${dec.action === 'reschedule' ? `<input type="date" class="rv-date" value="${dec.date ?? ''}" placeholder="Когда?" />` : ''}
+        </div>`
+      row.querySelector<HTMLInputElement>('.rv-done-check')!.addEventListener('change', (e) => {
+        decisions[task.id] = { action: (e.target as HTMLInputElement).checked ? 'done' : 'reschedule' }
+        renderReviewList()
+      })
+      row.querySelectorAll<HTMLButtonElement>('.rv-btn[data-action]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          decisions[task.id] = { action: btn.dataset.action as 'done' | 'skip' | 'accumulate' | 'reschedule' }
+          renderReviewList()
+        })
+      })
+      row.querySelector<HTMLInputElement>('.rv-date')?.addEventListener('change', (e) => {
+        decisions[task.id].date = (e.target as HTMLInputElement).value
+      })
+      list.appendChild(row)
+    })
+  }
+  renderReviewList()
+
+  document.querySelector('#review-submit')!.addEventListener('click', async () => {
+    for (const task of yesterdayTasks) {
+      const dec = decisions[task.id]
+      if (dec.action === 'done') {
+        await updateTask(task.id, { done: true })
+      } else if (dec.action === 'skip') {
+        await updateTask(task.id, { skipped: true })
+      } else if (dec.action === 'accumulate') {
+        const nextAcc = task.accumulation + task.weight
+        await updateTask(task.id, { scheduledDate: todayStr(), accumulation: nextAcc, skipped: false })
+      } else if (dec.action === 'reschedule') {
+        await updateTask(task.id, { scheduledDate: dec.date || todayStr(), skipped: false })
+      }
+    }
+    await refreshData()
+    tasksSubView = 'calendar'
+    renderTasksSection()
+  })
+}
+
+// ===================== END TASKS =====================
+
 // ===================== INSTRUCTIONS =====================
 
 function renderInstructions() {
@@ -1315,11 +1720,12 @@ function renderTodoRow(list: HTMLElement, todo: TodoItem) {
 
 async function refreshData() {
   try {
-    ;[documents, todos, instructions] = await Promise.all([listDocuments(), listTodos(), listInstructions()])
+    ;[documents, todos, instructions, tasks] = await Promise.all([listDocuments(), listTodos(), listInstructions(), listTasks()])
   } catch {
     documents = []
     todos = []
     instructions = []
+    tasks = []
   }
 }
 
@@ -1378,8 +1784,20 @@ function buildDocumentSystemPrompt(): string {
     docLines || 'нет',
     todoLines ? `АКТИВНЫЕ НАПОМИНАНИЯ:\n${todoLines}` : '',
     instrLines ? `ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ (${instructions.length}):\n${instrLines}` : '',
-    'ПРАВИЛА:\n- Когда спрашивают об инструкции — излагай шаги последовательно или все сразу в зависимости от контекста. Анализируй и объясняй, не просто воспроизводи текст.\n- Если в инструкции нужны документы — показывай их данные из списка выше.\n- Фото документа уже отображается в интерфейсе. Не говори что не можешь показать фото. Не пиши markdown ![](). Просто скажи "Вот фото:" и опиши содержимое.'
+    buildTasksContext(),
+    'ПРАВИЛА:\n- Когда спрашивают об инструкции — излагай шаги последовательно или все сразу. Анализируй и объясняй.\n- Если в инструкции нужны документы — показывай их данные.\n- Фото документа уже отображается в интерфейсе. Не говори что не можешь показать фото. Не пиши markdown ![]().\n- ЗАДАЧИ: когда пользователь упоминает дело, задачу, встречу, план — в КОНЦЕ ответа добавь блок:\n[TASK]{"title":"...","type":"fixed|flexible|periodic","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD или пусто","scheduledTime":"HH:MM или пусто","onMissed":"skip|accumulate|reschedule","recurrence":"daily|weekly|monthly или пусто","notes":"..."}[/TASK]\nЕсли информации недостаточно — задай уточняющий вопрос. Если это просто общий разговор без конкретного дела — не добавляй блок.'
   ].filter(Boolean).join('\n\n')
+}
+
+function buildTasksContext(): string {
+  if (tasks.length === 0) return ''
+  const today = new Date().toISOString().slice(0, 10)
+  const todayTasks = tasks.filter((t) => t.scheduledDate === today && !t.done && !t.skipped)
+  const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
+  const lines: string[] = ['ЗАДАЧИ:']
+  if (todayTasks.length) lines.push(`Сегодня (${today}):\n${todayTasks.map((t) => `  - ${t.title} [${t.type}, ${t.weight} ед.${t.deadline ? ', до ' + t.deadline : ''}]`).join('\n')}`)
+  if (backlog.length) lines.push(`Бэклог (${backlog.length}):\n${backlog.slice(0, 8).map((t) => `  - ${t.title}${t.deadline ? ' [до ' + t.deadline + ']' : ''}`).join('\n')}`)
+  return lines.join('\n')
 }
 
 function findDocumentImage(text: string): string | undefined {

@@ -8,6 +8,7 @@ export interface ChatMessage {
   model?: string
   attachmentName?: string
   displayImage?: string
+  taskProposal?: Record<string, unknown>
 }
 
 export interface Conversation {
@@ -44,6 +45,31 @@ export interface TodoItem {
   dueDate: string
   done: boolean
   createdAt: number
+}
+
+export type TaskType = 'fixed' | 'flexible' | 'periodic'
+export type OnMissed = 'skip' | 'accumulate' | 'reschedule'
+
+export interface ScheduledTask {
+  id: string
+  title: string
+  type: TaskType
+  weight: number
+  context: string
+  conditions: string
+  deadline?: string
+  scheduledDate?: string
+  scheduledTime?: string
+  recurrence?: string
+  onMissed: OnMissed
+  accumulation: number
+  chainId?: string
+  chainOrder?: number
+  done: boolean
+  skipped: boolean
+  notes: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface InstructionStep {
