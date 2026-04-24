@@ -9,7 +9,7 @@ export interface ChatMessage {
   attachmentName?: string
   displayImage?: string
   taskProposal?: Record<string, unknown>
-  routineProposal?: Record<string, unknown>
+  routineProposals?: Record<string, unknown>[]
 }
 
 export interface Conversation {
@@ -55,7 +55,8 @@ export interface Routine {
   id: string
   title: string
   daysOfWeek: number[]   // 0=вс, 1=пн, 2=вт, 3=ср, 4=чт, 5=пт, 6=сб
-  time?: string
+  time?: string          // fallback time (если times не задан)
+  times?: Record<string, string>  // время по дням: {"3":"18:00","0":"14:00"}
   weight: number
   context: string
   color: string

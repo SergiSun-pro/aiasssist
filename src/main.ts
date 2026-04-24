@@ -457,10 +457,11 @@ function renderChat() {
       messagesEl.appendChild(card)
     }
 
-    // карточка предложения рутины
-    if (m.routineProposal) {
-      const r = m.routineProposal as Record<string, unknown>
-      const days = (Array.isArray(r.daysOfWeek) ? r.daysOfWeek as number[] : []).map((d) => DAYS_SHORT[d]).join(', ')
+    // карточки предложений рутин
+    for (const r of (m.routineProposals ?? [])) {
+      const times = r.times as Record<string, string> | undefined
+      const days = (Array.isArray(r.daysOfWeek) ? r.daysOfWeek as number[] : [])
+        .map((d) => { const t = times?.[String(d)] ?? (r.time as string | undefined); return DAYS_SHORT[d] + (t ? ' ' + t : '') }).join(', ')
       const rcard = document.createElement('div')
       rcard.className = 'task-proposal-card'
       rcard.style.borderColor = String(r.color ?? '#4f46e5')
@@ -546,7 +547,7 @@ function renderChat() {
         systemPrompt: buildDocumentSystemPrompt()
       })
       const taskMatch = reply.match(/\[TASK\]([\s\S]*?)\[\/TASK\]/i)
-      const routineMatch = reply.match(/\[ROUTINE\]([\s\S]*?)\[\/ROUTINE\]/i)
+      const routineMatches = [...reply.matchAll(/\[ROUTINE\]([\s\S]*?)\[\/ROUTINE\]/gi)]
       const habitMatch = reply.match(/\[HABIT\]([\s\S]*?)\[\/HABIT\]/i)
       const cleanReply = reply
         .replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '')
@@ -555,8 +556,31 @@ function renderChat() {
         .replace(/\n{3,}/g, '\n\n').trim()
       const aiMsg: ChatMessage = { id: createId(), role: 'assistant', content: cleanReply, createdAt: Date.now(), model: getCurrentModel() }
       if (taskMatch) { try { aiMsg.taskProposal = JSON.parse(taskMatch[1].trim()) } catch { /* ignore */ } }
-      if (routineMatch) { try { aiMsg.routineProposal = JSON.parse(routineMatch[1].trim()) } catch { /* ignore */ } }
       if (habitMatch) { try { aiMsg.taskProposal = { ...JSON.parse(habitMatch[1].trim()), _type: 'habit' } } catch { /* ignore */ } }
+      if (routineMatches.length > 0) {
+        const parsed: Record<string, unknown>[] = []
+        for (const m of routineMatches) {
+          try { parsed.push(JSON.parse(m[1].trim())) } catch { /* ignore */ }
+        }
+        // если AI создал несколько блоков с одним названием — объединяем daysOfWeek
+        if (parsed.length > 1) {
+          const merged = new Map<string, Record<string, unknown>>()
+          for (const r of parsed) {
+            const key = String(r.title ?? '').toLowerCase()
+            if (merged.has(key)) {
+              const existing = merged.get(key)!
+              const existDays = Array.isArray(existing.daysOfWeek) ? existing.daysOfWeek as number[] : []
+              const newDays = Array.isArray(r.daysOfWeek) ? r.daysOfWeek as number[] : []
+              existing.daysOfWeek = [...new Set([...existDays, ...newDays])].sort()
+            } else {
+              merged.set(key, { ...r })
+            }
+          }
+          aiMsg.routineProposals = [...merged.values()]
+        } else {
+          aiMsg.routineProposals = parsed
+        }
+      }
       currentConversation.messages.push(aiMsg)
     } catch (error) {
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: `Ошибка: ${error instanceof Error ? error.message : 'Unknown error'}`, createdAt: Date.now() })
@@ -1191,13 +1215,16 @@ function renderRoutinesView() {
     const card = document.createElement('div')
     card.className = 'routine-card'
     card.style.borderLeftColor = r.color
-    const days = r.daysOfWeek.sort().map((d) => `<span class="day-badge">${DAYS_SHORT[d]}</span>`).join('')
+    const days = r.daysOfWeek.sort().map((d) => {
+      const t = r.times?.[String(d)] ?? r.time
+      return `<span class="day-badge">${DAYS_SHORT[d]}${t ? ' ' + t : ''}</span>`
+    }).join('')
     card.innerHTML = `
       <div class="task-card-row">
         <div style="width:10px;height:10px;border-radius:50%;background:${r.color};flex-shrink:0;margin-top:4px"></div>
         <div class="task-card-body">
           <div class="task-card-title">${escapeAttr(r.title)}</div>
-          <div class="task-card-meta">${days}<span class="task-weight">${r.weight} ед.</span>${r.time ? `<span>⏰ ${r.time}</span>` : ''}${r.context ? `<span>📍 ${escapeAttr(r.context)}</span>` : ''}</div>
+          <div class="task-card-meta">${days}<span class="task-weight">${r.weight} ед.</span>${r.context ? `<span>📍 ${escapeAttr(r.context)}</span>` : ''}</div>
         </div>
         <div class="task-card-actions-inline" style="opacity:1">
           <button class="r-edit conv-action-btn">✏</button>
@@ -1228,13 +1255,20 @@ function renderRoutineForm(routine?: Routine) {
         <input id="rf-title" placeholder="Например: Тренировка" value="${escapeAttr(routine?.title ?? '')}" required />
       </div>
       <div class="form-section">
-        <label class="form-label">Дни недели</label>
-        <div class="dow-grid">
-          ${[1,2,3,4,5,6,0].map((d) => `<label class="dow-label ${(routine?.daysOfWeek ?? []).includes(d) ? 'active' : ''}"><input type="checkbox" class="dow-check" value="${d}" ${(routine?.daysOfWeek ?? []).includes(d) ? 'checked' : ''} />${DAYS_SHORT[d]}</label>`).join('')}
+        <label class="form-label">Дни недели и время</label>
+        <div class="dow-time-grid">
+          ${[1,2,3,4,5,6,0].map((d) => {
+            const checked = (routine?.daysOfWeek ?? []).includes(d)
+            const dayTime = routine?.times?.[String(d)] ?? (checked && !routine?.times ? (routine?.time ?? '') : '')
+            return `<label class="dow-time-row ${checked ? 'active' : ''}">
+              <input type="checkbox" class="dow-check" value="${d}" ${checked ? 'checked' : ''} />
+              <span class="dow-name">${DAYS_SHORT[d]}</span>
+              <input type="time" class="dow-time-input" data-day="${d}" value="${dayTime}" ${!checked ? 'disabled' : ''} placeholder="--:--" />
+            </label>`
+          }).join('')}
         </div>
       </div>
       <div class="form-row">
-        <div class="form-section" style="flex:0 0 140px"><label class="form-label">Время</label><input id="rf-time" type="time" value="${routine?.time ?? ''}" /></div>
         <div class="form-section" style="flex:0 0 120px"><label class="form-label">Вес (ед.)</label><input id="rf-weight" type="number" min="0.5" step="0.5" value="${routine?.weight ?? 1}" /></div>
         <div class="form-section" style="flex:1"><label class="form-label">При пропуске</label><select id="rf-onmissed">${(['skip','accumulate','reschedule'] as OnMissed[]).map((v) => `<option value="${v}" ${routine?.onMissed === v ? 'selected' : ''}>${ON_MISSED_LABELS[v]}</option>`).join('')}</select></div>
       </div>
@@ -1257,10 +1291,15 @@ function renderRoutineForm(routine?: Routine) {
   document.querySelector('#rf-back')!.addEventListener('click', goBack)
   document.querySelector('#rf-cancel')!.addEventListener('click', goBack)
 
-  // дни недели — подсветка
-  document.querySelectorAll<HTMLLabelElement>('.dow-label').forEach((lbl) => {
-    const cb = lbl.querySelector<HTMLInputElement>('input')!
-    cb.addEventListener('change', () => lbl.classList.toggle('active', cb.checked))
+  // дни недели — подсветка + enable/disable time input
+  document.querySelectorAll<HTMLLabelElement>('.dow-time-row').forEach((row) => {
+    const cb = row.querySelector<HTMLInputElement>('.dow-check')!
+    const ti = row.querySelector<HTMLInputElement>('.dow-time-input')!
+    cb.addEventListener('change', () => {
+      row.classList.toggle('active', cb.checked)
+      ti.disabled = !cb.checked
+      if (!cb.checked) ti.value = ''
+    })
   })
 
   // цвет
@@ -1277,7 +1316,10 @@ function renderRoutineForm(routine?: Routine) {
     const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id)!).value.trim()
     const daysOfWeek = Array.from(document.querySelectorAll<HTMLInputElement>('.dow-check:checked')).map((c) => Number(c.value))
     if (!daysOfWeek.length) { const err = document.querySelector<HTMLParagraphElement>('#rf-error')!; err.textContent = 'Выбери хотя бы один день'; err.classList.remove('hidden'); return }
-    const payload = { title: v('#rf-title'), daysOfWeek, time: v('#rf-time') || undefined, weight: parseFloat(v('#rf-weight')) || 1, context: v('#rf-context'), color: v('#rf-color') || PRESET_COLORS[0], onMissed: v('#rf-onmissed') as OnMissed, notes: v('#rf-notes') }
+    const times: Record<string, string> = {}
+    document.querySelectorAll<HTMLInputElement>('.dow-time-input:not([disabled])').forEach((ti) => { if (ti.value) times[ti.dataset.day!] = ti.value })
+    const firstTime = Object.values(times)[0]
+    const payload = { title: v('#rf-title'), daysOfWeek, time: firstTime, times: Object.keys(times).length ? times : undefined, weight: parseFloat(v('#rf-weight')) || 1, context: v('#rf-context'), color: v('#rf-color') || PRESET_COLORS[0], onMissed: v('#rf-onmissed') as OnMissed, notes: v('#rf-notes') }
     try {
       if (isEdit && routine?.id) await updateRoutine(routine.id, payload)
       else await createRoutine(payload)
@@ -1460,7 +1502,8 @@ function renderCalendarView() {
     const overLimit = dailyLimit > 0 && units > dailyLimit
     const routineChips = dayRoutines.map((r) => {
       const log = routineLogs.find((l) => l.routineId === r.id && l.date === ds)
-      return `<div class="cal-routine-chip ${log?.status === 'done' ? 'cal-done' : log?.status === 'skipped' ? 'cal-skipped' : ''}" style="border-left:3px solid ${r.color}" data-routine-id="${r.id}" data-date="${ds}" title="${escapeAttr(r.title)}">${escapeAttr(r.title.slice(0, 18))}${r.title.length > 18 ? '…' : ''}${r.time ? ' ' + r.time : ''}</div>`
+      const dayTime = r.times?.[String(dow)] ?? r.time
+      return `<div class="cal-routine-chip ${log?.status === 'done' ? 'cal-done' : log?.status === 'skipped' ? 'cal-skipped' : ''}" style="border-left:3px solid ${r.color}" data-routine-id="${r.id}" data-date="${ds}" title="${escapeAttr(r.title)}">${escapeAttr(r.title.slice(0, 16))}${r.title.length > 16 ? '…' : ''}${dayTime ? ' ' + dayTime : ''}</div>`
     }).join('')
     const taskChips = dayTasks.map((t) => `<div class="cal-task-chip task-type-flexible" data-task-id="${t.id}" title="${escapeAttr(t.title)}">${escapeAttr(t.title.slice(0, 18))}${t.title.length > 18 ? '…' : ''}</div>`).join('')
     return `<div class="calendar-day ${isToday ? 'today' : ''}">
@@ -2070,9 +2113,12 @@ function buildDocumentSystemPrompt(): string {
 
 КОГДА ДОБАВЛЯТЬ БЛОКИ В КОНЕЦ ОТВЕТА:
 
-▶ РУТИНА — если дело ПОВТОРЯЕТСЯ регулярно (каждую неделю, каждый день, по дням недели):
-[ROUTINE]{"title":"...","daysOfWeek":[1,3,5],"time":"HH:MM или пусто","weight":1,"context":"...","color":"#4f46e5","onMissed":"skip","notes":"..."}[/ROUTINE]
-daysOfWeek: 0=вс,1=пн,2=вт,3=ср,4=чт,5=пт,6=сб. ВСЕ дни недели — в ОДНОМ блоке. НЕ создавай отдельный блок на каждый день!
+▶ РУТИНА — если дело ПОВТОРЯЕТСЯ регулярно (каждую неделю, по дням недели):
+[ROUTINE]{"title":"...","daysOfWeek":[3,0],"times":{"3":"18:00","0":"14:00"},"weight":2,"context":"...","color":"#4f46e5","onMissed":"skip","notes":"..."}[/ROUTINE]
+daysOfWeek числа: 0=вс,1=пн,2=вт,3=ср,4=чт,5=пт,6=сб
+times — объект вида {"день":"время"} — используй когда у разных дней разное время.
+Если время одинаковое для всех дней — используй поле "time" вместо "times".
+ВАЖНО: ВСЕ дни в ОДНОМ блоке! "Среда 18:00 и воскресенье 14:00" = daysOfWeek:[3,0], times:{"3":"18:00","0":"14:00"}. НЕ создавай 2 блока!
 
 ▶ ЗАДАЧА — если дело ОДНОРАЗОВОЕ (с дедлайном, без повторения):
 [TASK]{"title":"...","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD или пусто","scheduledTime":"HH:MM или пусто","onMissed":"reschedule","notes":"..."}[/TASK]

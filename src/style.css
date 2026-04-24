@@ -1094,11 +1094,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 /* === Routines === */
 .routine-card { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 8px; background: var(--panel); }
 .day-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
-.dow-grid { display: flex; gap: 8px; flex-wrap: wrap; }
-.dow-label { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); user-select: none; transition: all 0.15s; }
-.dow-label input { display: none; }
-.dow-label.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.dow-label:hover { border-color: var(--accent); }
+.dow-time-grid { display: flex; flex-direction: column; gap: 6px; }
+.dow-time-row { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--line); user-select: none; transition: all 0.15s; }
+.dow-time-row input[type="checkbox"] { display: none; }
+.dow-time-row .dow-name { font-size: 13px; font-weight: 600; color: var(--muted); min-width: 28px; }
+.dow-time-row .dow-time-input { margin-left: auto; font-size: 13px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); width: 110px; }
+.dow-time-row .dow-time-input:disabled { opacity: 0.3; cursor: not-allowed; }
+.dow-time-row.active { background: var(--accent-soft); border-color: var(--accent); }
+.dow-time-row.active .dow-name { color: var(--accent); }
+.dow-time-row:hover:not(.active) { border-color: var(--accent); }
 
 .cal-routine-chip { font-size: 11px; padding: 3px 6px; border-radius: 4px; background: var(--panel); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--line); margin-bottom: 2px; }
 .cal-routine-chip:hover { opacity: 0.8; }

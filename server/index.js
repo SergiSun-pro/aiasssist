@@ -434,13 +434,14 @@ app.post('/api/routines', async (req, res) => {
   const { title, daysOfWeek, time, weight, context, color, onMissed, notes, tags } = req.body ?? {}
   if (!title) { res.status(400).json({ error: 'title обязателен' }); return }
   const db = await readDb()
-  const routine = { id: createId(), title: String(title), daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek.map(Number) : [], time: time ?? undefined, weight: Number(weight) || 1, context: String(context ?? ''), color: String(color ?? '#4f46e5'), onMissed: onMissed ?? 'skip', notes: String(notes ?? ''), tags: Array.isArray(tags) ? tags : [], createdAt: Date.now(), updatedAt: Date.now() }
+  const { times } = req.body ?? {}
+  const routine = { id: createId(), title: String(title), daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek.map(Number) : [], time: time ?? undefined, times: (times && typeof times === 'object') ? times : undefined, weight: Number(weight) || 1, context: String(context ?? ''), color: String(color ?? '#4f46e5'), onMissed: onMissed ?? 'skip', notes: String(notes ?? ''), tags: Array.isArray(tags) ? tags : [], createdAt: Date.now(), updatedAt: Date.now() }
   db.routines.unshift(routine); await writeDb(db); res.json({ routine })
 })
 app.patch('/api/routines/:id', async (req, res) => {
   const db = await readDb(); const r = db.routines.find(x => x.id === req.params.id)
   if (!r) { res.status(404).json({ error: 'Рутина не найдена' }); return }
-  const fields = ['title','time','weight','context','color','onMissed','notes','tags']
+  const fields = ['title','time','times','weight','context','color','onMissed','notes','tags']
   for (const f of fields) if (req.body[f] !== undefined) r[f] = req.body[f]
   if (req.body.daysOfWeek) r.daysOfWeek = req.body.daysOfWeek.map(Number)
   r.updatedAt = Date.now(); await writeDb(db); res.json({ routine: r })

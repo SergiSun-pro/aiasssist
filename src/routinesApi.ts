@@ -7,7 +7,7 @@ async function parse<T>(r: Response): Promise<T> {
   return d as T
 }
 
-export type RoutinePayload = Omit<Routine, 'id' | 'createdAt' | 'updatedAt'>
+export type RoutinePayload = Omit<Routine, 'id' | 'createdAt' | 'updatedAt'> & { times?: Record<string, string> }
 
 export async function listRoutines(): Promise<Routine[]> {
   return parse<{ routines: Routine[] }>(await authFetch('/api/routines')).then(v => v.routines)
