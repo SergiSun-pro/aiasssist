@@ -10,6 +10,7 @@ export interface ChatMessage {
   displayImage?: string
   taskProposal?: Record<string, unknown>
   routineProposals?: Record<string, unknown>[]
+  dailyReview?: { date: string; confirmed?: boolean }
 }
 
 export interface Conversation {

@@ -1115,6 +1115,33 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .color-dot:hover { transform: scale(1.15); }
 .color-dot.selected { border-color: var(--text); transform: scale(1.15); }
 
+/* === Daily Review Widget === */
+.daily-review-widget {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin: 8px 0 12px;
+  max-width: 560px;
+}
+.daily-review-widget.confirmed { border-color: #bbf7d0; background: #f0fdf4; }
+.drw-done { color: #15803d; font-size: 14px; font-weight: 600; }
+.drw-header { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+.drw-section { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 10px 0 6px; }
+.drw-item { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 6px; background: var(--bg); }
+.drw-check-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+.drw-item-title { flex: 1; font-weight: 500; }
+.drw-item-weight { font-size: 12px; color: var(--muted); background: var(--panel-2); border-radius: 4px; padding: 1px 6px; }
+.drw-undone-row { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.drw-undone-row.hidden { display: none; }
+.drw-action { font-size: 13px; padding: 5px 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel-2); max-width: 200px; }
+.drw-reschedule-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.drw-reschedule-row.hidden { display: none; }
+.drw-date { font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); }
+.drw-suggest-btn { font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--accent); color: var(--accent); background: transparent; cursor: pointer; }
+.drw-suggest-btn:hover { background: var(--accent-soft); }
+.drw-footer { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+
 /* === Routine action menu === */
 .routine-action-menu {
   position: fixed;

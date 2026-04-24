@@ -494,6 +494,12 @@ function renderChat() {
       rcard.querySelector('.rp-dismiss')!.addEventListener('click', () => rcard.remove())
       messagesEl.appendChild(rcard)
     }
+
+    // виджет итога дня
+    if (m.dailyReview) {
+      const conv = getActiveConversation()
+      if (conv) renderDailyReviewWidget(m.dailyReview.date, m.dailyReview.confirmed ?? false, messagesEl, m, conv)
+    }
   }
   messagesEl.scrollTop = messagesEl.scrollHeight
 
@@ -555,6 +561,8 @@ function renderChat() {
         .replace(/\[HABIT\][\s\S]*?\[\/HABIT\]/gi, '')
         .replace(/\n{3,}/g, '\n\n').trim()
       const aiMsg: ChatMessage = { id: createId(), role: 'assistant', content: cleanReply, createdAt: Date.now(), model: getCurrentModel() }
+      const reviewDate = extractReviewDate(text)
+      if (reviewDate) aiMsg.dailyReview = { date: reviewDate }
       if (taskMatch) { try { aiMsg.taskProposal = JSON.parse(taskMatch[1].trim()) } catch { /* ignore */ } }
       if (habitMatch) { try { aiMsg.taskProposal = { ...JSON.parse(habitMatch[1].trim()), _type: 'habit' } } catch { /* ignore */ } }
       if (routineMatches.length > 0) {
@@ -1151,6 +1159,193 @@ function renderTasksSection() {
   else if (tasksSubView === 'habits') renderHabitsView()
   else renderBacklogView()
 }
+
+// ─── Daily Review ──────────────────────────────────────────────────────────
+
+function extractReviewDate(text: string): string | null {
+  const lower = text.toLowerCase()
+  const keywords = ['итог дня', 'подвести итог', 'разбор дня', 'итоги за', 'что я сделал', 'итог за']
+  if (!keywords.some((kw) => lower.includes(kw))) return null
+  if (lower.includes('вчера')) return dayStr(addDays(new Date(), -1))
+  if (lower.includes('сегодня')) return todayStr()
+  const m = text.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/)
+  if (m) {
+    const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : String(new Date().getFullYear())
+    return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`
+  }
+  return dayStr(addDays(new Date(), -1)) // по умолчанию — вчера
+}
+
+function renderDailyReviewWidget(reviewDate: string, confirmed: boolean, container: HTMLElement, msg: ChatMessage, conv: typeof state.conversations[0]) {
+  const dateLabel = new Date(reviewDate + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
+  const dow = new Date(reviewDate + 'T12:00').getDay()
+  const dayTasks = tasks.filter((t) => t.scheduledDate === reviewDate)
+  const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
+  if (!dayTasks.length && !dayRoutines.length) return
+
+  const widget = document.createElement('div')
+  widget.className = `daily-review-widget${confirmed ? ' confirmed' : ''}`
+
+  if (confirmed) {
+    widget.innerHTML = `<div class="drw-done">✓ Итог за ${dateLabel} подведён</div>`
+    container.appendChild(widget)
+    return
+  }
+
+  const actionOpts = (def: string) => (['reschedule','accumulate','skip','forget'] as const)
+    .map((v) => `<option value="${v}" ${def === v ? 'selected':''}>${{reschedule:'Перенести',accumulate:'Накопить',skip:'Пропустить',forget:'Забыть'}[v]}</option>`).join('')
+
+  const buildItem = (id: string, type: 'task'|'routine', title: string, weight: number, done: boolean, onMissed: string) => {
+    const log = type === 'routine' ? routineLogs.find((l) => l.routineId === id && l.date === reviewDate) : null
+    const isDone = type === 'task' ? done : log?.status === 'done'
+    return `<div class="drw-item" data-id="${id}" data-type="${type}" data-weight="${weight}" data-on-missed="${onMissed}">
+      <label class="drw-check-label">
+        <input type="checkbox" class="drw-done-check" ${isDone ? 'checked' : ''} />
+        <span class="drw-item-title">${escapeAttr(title)}</span>
+        <span class="drw-item-weight">${weight} ед.</span>
+      </label>
+      <div class="drw-undone-row ${isDone ? 'hidden' : ''}">
+        <select class="drw-action">${actionOpts(onMissed)}</select>
+        <div class="drw-reschedule-row hidden">
+          <input type="date" class="drw-date" min="${todayStr()}" />
+          <button type="button" class="drw-suggest-btn">Предложить</button>
+        </div>
+      </div>
+    </div>`
+  }
+
+  const routineRows = dayRoutines.map((r) => buildItem(r.id, 'routine', r.title, r.weight, false, r.onMissed)).join('')
+  const taskRows = dayTasks.map((t) => buildItem(t.id, 'task', t.title, t.weight, t.done || t.skipped, t.onMissed)).join('')
+
+  widget.innerHTML = `
+    <div class="drw-header">📊 Итог — ${dateLabel}</div>
+    ${dayRoutines.length ? `<div class="drw-section">Рутины</div>${routineRows}` : ''}
+    ${dayTasks.length ? `<div class="drw-section">Задачи</div>${taskRows}` : ''}
+    <div class="drw-footer">
+      <button class="drw-confirm btn-primary">Подтвердить итог →</button>
+    </div>`
+
+  // логика показа/скрытия строки действия + дата для переноса
+  widget.querySelectorAll<HTMLDivElement>('.drw-item').forEach((item) => {
+    const check = item.querySelector<HTMLInputElement>('.drw-done-check')!
+    const undoneRow = item.querySelector<HTMLDivElement>('.drw-undone-row')!
+    const actionSel = item.querySelector<HTMLSelectElement>('.drw-action')!
+    const reschedRow = item.querySelector<HTMLDivElement>('.drw-reschedule-row')!
+    const suggestBtn = item.querySelector<HTMLButtonElement>('.drw-suggest-btn')!
+    const dateInput = item.querySelector<HTMLInputElement>('.drw-date')!
+
+    const updateVisibility = () => {
+      undoneRow.classList.toggle('hidden', check.checked)
+      reschedRow.classList.toggle('hidden', actionSel.value !== 'reschedule')
+    }
+    check.addEventListener('change', updateVisibility)
+    actionSel.addEventListener('change', updateVisibility)
+
+    suggestBtn.addEventListener('click', () => {
+      const routine = routines.find((r) => r.id === item.dataset.id)
+      const suggestions = routine
+        ? suggestRescheduleDates(routine, reviewDate)
+        : [{ date: dayStr(addDays(new Date(reviewDate + 'T12:00'), 1)) }, { date: dayStr(addDays(new Date(reviewDate + 'T12:00'), 2)) }]
+      const menu = document.createElement('div')
+      menu.className = 'routine-action-menu'
+      const rect = suggestBtn.getBoundingClientRect()
+      menu.style.cssText = `position:fixed;top:${rect.bottom+4}px;left:${rect.left}px`
+      menu.innerHTML = suggestions.slice(0,3).map((s) =>
+        `<button class="rma-btn" data-date="${s.date}">${new Date(s.date + 'T12:00').toLocaleDateString('ru',{weekday:'short',day:'numeric',month:'short'})}</button>`
+      ).join('')
+      document.body.appendChild(menu)
+      menu.querySelectorAll<HTMLButtonElement>('[data-date]').forEach((b) => {
+        b.addEventListener('click', () => { dateInput.value = b.dataset.date!; menu.remove() })
+      })
+      setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 50)
+    })
+  })
+
+  // подтверждение
+  widget.querySelector('.drw-confirm')!.addEventListener('click', async () => {
+    await confirmDailyReview(widget, reviewDate)
+    msg.dailyReview = { date: reviewDate, confirmed: true }
+    persist()
+    widget.replaceWith((() => { const d = document.createElement('div'); d.className = 'daily-review-widget confirmed'; d.innerHTML = `<div class="drw-done">✓ Итог за ${dateLabel} подведён</div>`; return d })())
+    // показываем обновлённое расписание следующего дня
+    await showPostReviewSchedule(reviewDate, conv)
+  })
+
+  container.appendChild(widget)
+}
+
+async function confirmDailyReview(widget: HTMLElement, reviewDate: string) {
+  const tomorrow = dayStr(addDays(new Date(reviewDate + 'T12:00'), 1))
+  for (const item of widget.querySelectorAll<HTMLDivElement>('.drw-item')) {
+    const id = item.dataset.id!
+    const type = item.dataset.type as 'task' | 'routine'
+    const weight = Number(item.dataset.weight) || 1
+    const check = item.querySelector<HTMLInputElement>('.drw-done-check')!
+    const action = item.querySelector<HTMLSelectElement>('.drw-action')?.value ?? 'skip'
+    const targetDate = item.querySelector<HTMLInputElement>('.drw-date')?.value || tomorrow
+
+    if (check.checked) {
+      if (type === 'task') await updateTask(id, { done: true })
+      else await logRoutine(id, reviewDate, 'done')
+    } else {
+      if (action === 'forget') {
+        if (type === 'task') await updateTask(id, { skipped: true })
+        else await logRoutine(id, reviewDate, 'skipped')
+      } else if (action === 'skip') {
+        if (type === 'task') await updateTask(id, { skipped: true })
+        else await logRoutine(id, reviewDate, 'skipped')
+      } else if (action === 'reschedule') {
+        if (type === 'task') {
+          await updateTask(id, { scheduledDate: targetDate, done: false, skipped: false })
+        } else {
+          await logRoutine(id, reviewDate, 'skipped')
+          const r = routines.find((x) => x.id === id)
+          if (r) await createTask({ title: r.title + ' ↷', weight: r.weight, context: r.context, conditions: '', scheduledDate: targetDate, scheduledTime: r.times?.[String(new Date(reviewDate+'T12:00').getDay())] ?? r.time, onMissed: 'skip', accumulation: 0, done: false, skipped: false, notes: `Перенос с ${reviewDate}` })
+        }
+      } else if (action === 'accumulate') {
+        if (type === 'task') {
+          await updateTask(id, { scheduledDate: tomorrow, accumulation: weight, done: false, skipped: false })
+        } else {
+          await logRoutine(id, reviewDate, 'skipped')
+          const r = routines.find((x) => x.id === id)
+          if (r) await createTask({ title: r.title + ' ↷', weight: r.weight * 2, context: r.context, conditions: '', scheduledDate: tomorrow, onMissed: 'accumulate', accumulation: r.weight, done: false, skipped: false, notes: `Накопление с ${reviewDate}` })
+        }
+      }
+    }
+  }
+  await refreshData()
+}
+
+async function showPostReviewSchedule(reviewDate: string, conv: typeof state.conversations[0]) {
+  const tomorrow = dayStr(addDays(new Date(reviewDate + 'T12:00'), 1))
+  const days = Array.from({ length: 3 }, (_, i) => dayStr(addDays(new Date(tomorrow + 'T12:00'), i)))
+  const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
+
+  const lines = days.map((d) => {
+    const dow = new Date(d + 'T12:00').getDay()
+    const dayTasks = tasks.filter((t) => t.scheduledDate === d && !t.done && !t.skipped)
+    const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
+    const units = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0) + dayRoutines.reduce((s, r) => s + r.weight, 0)
+    const over = dailyLimit > 0 && units > dailyLimit
+    const label = new Date(d + 'T12:00').toLocaleDateString('ru', { weekday: 'short', day: 'numeric', month: 'short' })
+    const items = [
+      ...dayRoutines.map((r) => `  🔁 ${r.title}${r.times?.[String(dow)] ?? r.time ? ' ' + (r.times?.[String(dow)] ?? r.time) : ''}`),
+      ...dayTasks.map((t) => `  📋 ${t.title}${t.accumulation ? ' (+' + t.accumulation + 'ед.)' : ''}`)
+    ].join('\n')
+    return `**${label}** — ${units}${dailyLimit ? '/' + dailyLimit : ''} ед.${over ? ' ⚠️' : ''}\n${items || '  _(пусто)_'}`
+  }).join('\n\n')
+
+  const scheduleMsg: ChatMessage = {
+    id: createId(), role: 'assistant',
+    content: `Вот расписание на ближайшие дни после подведения итогов:\n\n${lines}\n\nВсё верно, или что-то скорректируем?`,
+    createdAt: Date.now(), model: 'system'
+  }
+  conv.messages.push(scheduleMsg)
+  persist()
+  renderChat()
+}
+
+// ─── End Daily Review ───────────────────────────────────────────────────────
 
 function calcDayLoad(date: string): number {
   const dow = new Date(date).getDay()
