@@ -75,7 +75,7 @@ async function ensureDb() {
   try {
     await fs.access(DB_PATH)
   } catch {
-    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [], tasks: [] }, null, 2), 'utf8')
+    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [], tasks: [], routines: [], routineLogs: [], habits: [], habitLogs: [] }, null, 2), 'utf8')
   }
 }
 
@@ -87,7 +87,11 @@ async function readDb() {
     documents: Array.isArray(parsed.documents) ? parsed.documents : [],
     todos: Array.isArray(parsed.todos) ? parsed.todos : [],
     instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
-    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : []
+    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+    routines: Array.isArray(parsed.routines) ? parsed.routines : [],
+    routineLogs: Array.isArray(parsed.routineLogs) ? parsed.routineLogs : [],
+    habits: Array.isArray(parsed.habits) ? parsed.habits : [],
+    habitLogs: Array.isArray(parsed.habitLogs) ? parsed.habitLogs : []
   }
 }
 
@@ -419,6 +423,96 @@ app.delete('/api/tasks/:id', async (req, res) => {
   db.tasks.splice(idx, 1)
   await writeDb(db)
   res.json({ ok: true })
+})
+
+// === ROUTINES ===
+
+app.get('/api/routines', async (_req, res) => {
+  const db = await readDb(); res.json({ routines: db.routines })
+})
+app.post('/api/routines', async (req, res) => {
+  const { title, daysOfWeek, time, weight, context, color, onMissed, notes, tags } = req.body ?? {}
+  if (!title) { res.status(400).json({ error: 'title обязателен' }); return }
+  const db = await readDb()
+  const routine = { id: createId(), title: String(title), daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek.map(Number) : [], time: time ?? undefined, weight: Number(weight) || 1, context: String(context ?? ''), color: String(color ?? '#4f46e5'), onMissed: onMissed ?? 'skip', notes: String(notes ?? ''), tags: Array.isArray(tags) ? tags : [], createdAt: Date.now(), updatedAt: Date.now() }
+  db.routines.unshift(routine); await writeDb(db); res.json({ routine })
+})
+app.patch('/api/routines/:id', async (req, res) => {
+  const db = await readDb(); const r = db.routines.find(x => x.id === req.params.id)
+  if (!r) { res.status(404).json({ error: 'Рутина не найдена' }); return }
+  const fields = ['title','time','weight','context','color','onMissed','notes','tags']
+  for (const f of fields) if (req.body[f] !== undefined) r[f] = req.body[f]
+  if (req.body.daysOfWeek) r.daysOfWeek = req.body.daysOfWeek.map(Number)
+  r.updatedAt = Date.now(); await writeDb(db); res.json({ routine: r })
+})
+app.delete('/api/routines/:id', async (req, res) => {
+  const db = await readDb(); const i = db.routines.findIndex(x => x.id === req.params.id)
+  if (i === -1) { res.status(404).json({ error: 'Не найдена' }); return }
+  db.routines.splice(i, 1); db.routineLogs = db.routineLogs.filter(l => l.routineId !== req.params.id)
+  await writeDb(db); res.json({ ok: true })
+})
+
+app.get('/api/routine-logs', async (req, res) => {
+  const db = await readDb()
+  const start = req.query.start
+  const logs = start ? db.routineLogs.filter(l => l.date >= String(start)) : db.routineLogs
+  res.json({ logs })
+})
+app.post('/api/routine-logs', async (req, res) => {
+  const { routineId, date, status } = req.body ?? {}
+  if (!routineId || !date) { res.status(400).json({ error: 'routineId и date обязательны' }); return }
+  const db = await readDb()
+  const existing = db.routineLogs.find(l => l.routineId === routineId && l.date === date)
+  if (existing) { existing.status = status; await writeDb(db); res.json({ log: existing }); return }
+  const log = { id: createId(), routineId, date, status: status ?? 'done', createdAt: Date.now() }
+  db.routineLogs.unshift(log); await writeDb(db); res.json({ log })
+})
+app.delete('/api/routine-logs/:id', async (req, res) => {
+  const db = await readDb(); const i = db.routineLogs.findIndex(l => l.id === req.params.id)
+  if (i === -1) { res.status(404).json({ error: 'Не найден' }); return }
+  db.routineLogs.splice(i, 1); await writeDb(db); res.json({ ok: true })
+})
+
+// === HABITS ===
+
+app.get('/api/habits', async (_req, res) => {
+  const db = await readDb(); res.json({ habits: db.habits })
+})
+app.post('/api/habits', async (req, res) => {
+  const { title, description, icon, color, targetCount, daysOfWeek, notes, tags } = req.body ?? {}
+  if (!title) { res.status(400).json({ error: 'title обязателен' }); return }
+  const db = await readDb()
+  const habit = { id: createId(), title: String(title), description: String(description ?? ''), icon: String(icon ?? '⭐'), color: String(color ?? '#4f46e5'), targetCount: Number(targetCount) || 1, daysOfWeek: Array.isArray(daysOfWeek) ? daysOfWeek.map(Number) : undefined, notes: String(notes ?? ''), tags: Array.isArray(tags) ? tags : [], createdAt: Date.now(), updatedAt: Date.now() }
+  db.habits.unshift(habit); await writeDb(db); res.json({ habit })
+})
+app.patch('/api/habits/:id', async (req, res) => {
+  const db = await readDb(); const h = db.habits.find(x => x.id === req.params.id)
+  if (!h) { res.status(404).json({ error: 'Привычка не найдена' }); return }
+  const fields = ['title','description','icon','color','targetCount','daysOfWeek','notes','tags']
+  for (const f of fields) if (req.body[f] !== undefined) h[f] = req.body[f]
+  h.updatedAt = Date.now(); await writeDb(db); res.json({ habit: h })
+})
+app.delete('/api/habits/:id', async (req, res) => {
+  const db = await readDb(); const i = db.habits.findIndex(x => x.id === req.params.id)
+  if (i === -1) { res.status(404).json({ error: 'Не найдена' }); return }
+  db.habits.splice(i, 1); db.habitLogs = db.habitLogs.filter(l => l.habitId !== req.params.id)
+  await writeDb(db); res.json({ ok: true })
+})
+
+app.get('/api/habit-logs', async (req, res) => {
+  const db = await readDb()
+  const start = req.query.start
+  const logs = start ? db.habitLogs.filter(l => l.date >= String(start)) : db.habitLogs
+  res.json({ logs })
+})
+app.post('/api/habit-logs', async (req, res) => {
+  const { habitId, date, count } = req.body ?? {}
+  if (!habitId || !date) { res.status(400).json({ error: 'habitId и date обязательны' }); return }
+  const db = await readDb()
+  const existing = db.habitLogs.find(l => l.habitId === habitId && l.date === date)
+  if (existing) { existing.count = Number(count) || 0; await writeDb(db); res.json({ log: existing }); return }
+  const log = { id: createId(), habitId, date, count: Number(count) || 1, createdAt: Date.now() }
+  db.habitLogs.unshift(log); await writeDb(db); res.json({ log })
 })
 
 // === USER SETTINGS ===

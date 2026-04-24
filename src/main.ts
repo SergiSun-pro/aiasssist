@@ -5,11 +5,13 @@ import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
 import { createInstruction, deleteInstruction, listInstructions, updateInstruction } from './instructionsApi'
 import { createTask, deleteTask, listTasks, updateTask } from './tasksApi'
+import { createRoutine, deleteRoutine, deleteRoutineLog, listRoutineLogs, listRoutines, logRoutine, updateRoutine } from './routinesApi'
+import { createHabit, deleteHabit, listHabitLogs, listHabits, logHabit, updateHabit } from './habitsApi'
 import { getSettings, saveSettings } from './settingsApi'
 import type { UserSettings } from './settingsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
-import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Instruction, InstructionStep, OnMissed, ScheduledTask, TaskType, TodoItem } from './types'
+import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Habit, HabitLog, Instruction, InstructionStep, OnMissed, Routine, RoutineLog, ScheduledTask, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
@@ -29,9 +31,18 @@ let instructions: Instruction[] = []
 let instructionSubView: 'list' | 'add' | 'edit' | 'view' = 'list'
 let activeInstruction: Instruction | null = null
 let tasks: ScheduledTask[] = []
-let tasksSubView: 'backlog' | 'calendar' | 'review' | 'form' = 'backlog'
+let routines: Routine[] = []
+let routineLogs: RoutineLog[] = []
+let habits: Habit[] = []
+let habitLogs: HabitLog[] = []
+let tasksSubView: 'tasks' | 'routines' | 'habits' | 'calendar' | 'review' | 'task-form' | 'routine-form' | 'habit-form' = 'tasks'
 let editingTask: ScheduledTask | null = null
+let editingRoutine: Routine | null = null
+let editingHabit: Habit | null = null
 let calendarWeekOffset = 0
+
+const DAYS_SHORT = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб']
+const PRESET_COLORS = ['#4f46e5','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#f97316']
 let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks' = 'chat'
 let docImageDataUrl: string | undefined
 let docExtractImages: string[] = []
@@ -402,37 +413,45 @@ function renderChat() {
       const img = item.querySelector<HTMLImageElement>('.message-image')!
       img.onclick = () => openImageFullscreen(m.displayImage!)
     }
-    item.querySelector('pre')!.textContent = m.content
+    item.querySelector('pre')!.textContent = m.content.replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
     messagesEl.appendChild(item)
     if (m.taskProposal) {
       const p = m.taskProposal as Record<string, unknown>
       const card = document.createElement('div')
       card.className = 'task-proposal-card'
       const typeLabels: Record<string, string> = { fixed: 'Фиксированная', flexible: 'Гибкая', periodic: 'Периодическая' }
-card.innerHTML = `<div class="task-proposal-header"><span class="task-proposal-icon">📋</span><span>Предлагаемая задача</span></div>
+      const needsDate = !p.scheduledDate && (p.type === 'fixed' || p.type === 'periodic')
+      const recurrenceLabel: Record<string, string> = { daily: 'ежедневно', weekly: 'еженедельно', monthly: 'ежемесячно' }
+      card.innerHTML = `
+        <div class="task-proposal-header"><span class="task-proposal-icon">📋</span><span>Предлагаемая задача</span></div>
         <div class="task-proposal-title">${escapeAttr(String(p.title ?? ''))}</div>
         <div class="task-proposal-meta">
           <span class="task-type-badge task-type-${p.type}">${typeLabels[String(p.type)] ?? String(p.type)}</span>
           <span>${p.weight ?? 1} ед.</span>
-          ${p.scheduledDate ? `<span>📅 ${p.scheduledDate}</span>` : ''}
+          ${p.scheduledDate ? `<span>📅 ${p.scheduledDate}${p.scheduledTime ? ' ' + p.scheduledTime : ''}</span>` : ''}
+          ${p.recurrence ? `<span>🔁 ${recurrenceLabel[String(p.recurrence)] ?? p.recurrence}</span>` : ''}
           ${p.deadline ? `<span>⏰ до ${p.deadline}</span>` : ''}
           ${p.context ? `<span>📍 ${escapeAttr(String(p.context))}</span>` : ''}
         </div>
         ${p.notes ? `<div class="task-proposal-notes">${escapeAttr(String(p.notes))}</div>` : ''}
+        ${needsDate ? `<div class="task-proposal-date-row"><label style="font-size:13px;color:var(--muted)">📅 Дата первого события:</label><input type="date" class="proposal-date-input" value="${todayStr()}" /></div>` : ''}
         <div class="task-proposal-actions">
           <button class="btn-primary task-proposal-save">✓ Добавить задачу</button>
           <button class="btn-secondary task-proposal-edit">✏ Изменить</button>
           <button class="btn-secondary task-proposal-dismiss">✕</button>
         </div>`
       card.querySelector('.task-proposal-save')!.addEventListener('click', async () => {
-        await createTask(p as Parameters<typeof createTask>[0])
+        const dateInput = card.querySelector<HTMLInputElement>('.proposal-date-input')
+        const scheduledDate = dateInput?.value || String(p.scheduledDate || '')
+        if (needsDate && !scheduledDate) { alert('Укажи дату первого события'); return }
+        await createTask({ ...(p as Parameters<typeof createTask>[0]), scheduledDate: scheduledDate || undefined })
         await refreshData()
         card.innerHTML = '<div style="padding:8px 12px;color:var(--accent);font-size:13px">✓ Задача добавлена</div>'
       })
       card.querySelector('.task-proposal-edit')!.addEventListener('click', () => {
-        editingTask = null; tasksSubView = 'form'
-        Object.assign(editingTask = { id: '', createdAt: 0, updatedAt: 0, done: false, skipped: false, accumulation: 0, notes: '', context: '', conditions: '' } as ScheduledTask, p)
-        setTab('tasks')
+        editingTask = { id: '', createdAt: 0, updatedAt: 0, done: false, skipped: false, accumulation: 0, notes: '', context: '', conditions: '' } as ScheduledTask
+        Object.assign(editingTask, p)
+        tasksSubView = 'task-form'; setTab('tasks')
       })
       card.querySelector('.task-proposal-dismiss')!.addEventListener('click', () => card.remove())
       messagesEl.appendChild(card)
@@ -1006,7 +1025,6 @@ function addFieldRow(key = '', value = '') {
 
 // ===================== TASKS =====================
 
-const TASK_TYPE_LABELS: Record<TaskType, string> = { fixed: 'Фиксированная', flexible: 'Гибкая', periodic: 'Периодическая' }
 const ON_MISSED_LABELS: Record<OnMissed, string> = { skip: 'Пропустить', accumulate: 'Накопить', reschedule: 'Перенести' }
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
@@ -1023,36 +1041,50 @@ function taskDeadlineStatus(task: ScheduledTask): 'overdue' | 'soon' | 'ok' {
 }
 
 function renderTasksSection() {
-  if (tasksSubView === 'form') { renderTaskForm(editingTask ?? undefined); return }
+  if (tasksSubView === 'task-form') { renderTaskForm(editingTask ?? undefined); return }
+  if (tasksSubView === 'routine-form') { renderRoutineForm(editingRoutine ?? undefined); return }
+  if (tasksSubView === 'habit-form') { renderHabitForm(editingHabit ?? undefined); return }
   if (tasksSubView === 'review') { renderDailyReview(); return }
 
   const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
   const today = todayStr()
   const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
   const todayTasks = tasks.filter((t) => t.scheduledDate === today && !t.done && !t.skipped)
-  const todayUnits = todayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
+  const todayRoutines = routines.filter((r) => r.daysOfWeek.includes(new Date().getDay()))
+  const totalUnits = todayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0) + todayRoutines.reduce((s, r) => s + r.weight, 0)
 
+  const isActive = (v: string) => tasksSubView === v ? 'active' : ''
   contentRoot.innerHTML = `<section class="documents tasks-section">
     <div class="page-header-row">
-      <div><h2>Задачи</h2><p class="page-subtitle">Бэклог: ${backlog.length} · Сегодня: ${todayTasks.length}${dailyLimit ? ` · ${todayUnits}/${dailyLimit} ед.` : ''}</p></div>
+      <div><h2>Планирование</h2><p class="page-subtitle">Сегодня: ${totalUnits}${dailyLimit ? '/' + dailyLimit : ''} ед.</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня</button>
-        <button id="tasks-add-btn" class="btn-primary">+ Задача</button>
+        ${ tasksSubView === 'tasks' ? '<button id="tasks-add-btn" class="btn-primary">+ Задача</button>' : '' }
+        ${ tasksSubView === 'routines' ? '<button id="routine-add-btn" class="btn-primary">+ Рутина</button>' : '' }
+        ${ tasksSubView === 'habits' ? '<button id="habit-add-btn" class="btn-primary">+ Привычка</button>' : '' }
       </div>
     </div>
     <div class="tasks-sub-tabs">
-      <button id="tasks-tab-backlog" class="tasks-sub-tab ${tasksSubView === 'backlog' ? 'active' : ''}">Общий список <span class="tasks-badge">${backlog.length}</span></button>
-      <button id="tasks-tab-calendar" class="tasks-sub-tab ${tasksSubView === 'calendar' ? 'active' : ''}">Календарь</button>
+      <button id="tasks-tab-tasks" class="tasks-sub-tab ${isActive('tasks')}">📋 Задачи <span class="tasks-badge">${backlog.length}</span></button>
+      <button id="tasks-tab-routines" class="tasks-sub-tab ${isActive('routines')}">🔁 Рутины <span class="tasks-badge">${routines.length}</span></button>
+      <button id="tasks-tab-habits" class="tasks-sub-tab ${isActive('habits')}">🌱 Привычки <span class="tasks-badge">${habits.length}</span></button>
+      <button id="tasks-tab-calendar" class="tasks-sub-tab ${isActive('calendar')}">📅 Календарь</button>
     </div>
     <div id="tasks-content"></div>
   </section>`
 
-  document.querySelector('#tasks-add-btn')!.addEventListener('click', () => { editingTask = null; tasksSubView = 'form'; renderTasksSection() })
   document.querySelector('#tasks-review-btn')!.addEventListener('click', () => { tasksSubView = 'review'; renderTasksSection() })
-  document.querySelector('#tasks-tab-backlog')!.addEventListener('click', () => { tasksSubView = 'backlog'; renderTasksSection() })
+  document.querySelector('#tasks-tab-tasks')!.addEventListener('click', () => { tasksSubView = 'tasks'; renderTasksSection() })
+  document.querySelector('#tasks-tab-routines')!.addEventListener('click', () => { tasksSubView = 'routines'; renderTasksSection() })
+  document.querySelector('#tasks-tab-habits')!.addEventListener('click', () => { tasksSubView = 'habits'; renderTasksSection() })
   document.querySelector('#tasks-tab-calendar')!.addEventListener('click', () => { tasksSubView = 'calendar'; renderTasksSection() })
+  document.querySelector('#tasks-add-btn')?.addEventListener('click', () => { editingTask = null; tasksSubView = 'task-form'; renderTasksSection() })
+  document.querySelector('#routine-add-btn')?.addEventListener('click', () => { editingRoutine = null; tasksSubView = 'routine-form'; renderTasksSection() })
+  document.querySelector('#habit-add-btn')?.addEventListener('click', () => { editingHabit = null; tasksSubView = 'habit-form'; renderTasksSection() })
 
   if (tasksSubView === 'calendar') renderCalendarView()
+  else if (tasksSubView === 'routines') renderRoutinesView()
+  else if (tasksSubView === 'habits') renderHabitsView()
   else renderBacklogView()
 }
 
@@ -1061,48 +1093,36 @@ function renderBacklogView() {
   const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
   const scheduled = tasks.filter((t) => t.scheduledDate && !t.done && !t.skipped)
   const done = tasks.filter((t) => t.done || t.skipped)
-
-  const renderGroup = (label: string, items: ScheduledTask[]) => {
-    if (!items.length) return ''
-    return `<div class="tasks-group-label">${label}</div>${items.map((t) => renderTaskCard(t)).join('')}`
-  }
-
-  const overdue = backlog.filter((t) => taskDeadlineStatus(t) === 'overdue')
-  const soon = backlog.filter((t) => taskDeadlineStatus(t) === 'soon')
-  const normal = backlog.filter((t) => taskDeadlineStatus(t) === 'ok')
-
+  const grp = (label: string, items: ScheduledTask[]) => items.length ? `<div class="tasks-group-label">${label}</div>${items.map((t) => renderTaskCard(t)).join('')}` : ''
   container.innerHTML = `
-    ${renderGroup('🔴 Просрочен дедлайн', overdue)}
-    ${renderGroup('🟡 Дедлайн скоро', soon)}
-    ${renderGroup('Без даты', normal)}
-    ${renderGroup('📅 Запланировано', scheduled)}
+    ${grp('🔴 Просрочен дедлайн', backlog.filter((t) => taskDeadlineStatus(t) === 'overdue'))}
+    ${grp('🟡 Дедлайн скоро', backlog.filter((t) => taskDeadlineStatus(t) === 'soon'))}
+    ${grp('Без даты', backlog.filter((t) => taskDeadlineStatus(t) === 'ok'))}
+    ${grp('📅 Запланировано', scheduled)}
     ${done.length ? `<div class="tasks-group-label">✓ Выполнено</div>${done.slice(0, 5).map((t) => renderTaskCard(t, true)).join('')}` : ''}
-    ${!tasks.length ? '<p class="hint">Задач пока нет. Добавьте первую или обсудите с ИИ в чате.</p>' : ''}
+    ${!tasks.length ? '<p class="hint">Задач пока нет. Создай первую или спроси ИИ в чате.</p>' : ''}
   `
   container.querySelectorAll<HTMLElement>('[data-task-id]').forEach((el) => wireTaskCard(el))
 }
 
 function renderTaskCard(task: ScheduledTask, compact = false): string {
   const status = taskDeadlineStatus(task)
-  const totalWeight = task.weight + task.accumulation
+  const w = task.weight + task.accumulation
   return `<div class="task-card task-status-${status}${task.done ? ' task-done' : ''}${task.skipped ? ' task-skipped' : ''}" data-task-id="${task.id}">
     <div class="task-card-row">
-      <label class="task-check-label">
-        <input type="checkbox" class="task-check" ${task.done ? 'checked' : ''} />
-      </label>
+      <label class="task-check-label"><input type="checkbox" class="task-check" ${task.done ? 'checked' : ''} /></label>
       <div class="task-card-body">
         <div class="task-card-title">${escapeAttr(task.title)}${task.accumulation > 0 ? ` <span class="task-accum">+${task.accumulation}ед.</span>` : ''}</div>
         ${!compact ? `<div class="task-card-meta">
-          <span class="task-type-badge task-type-${task.type}">${TASK_TYPE_LABELS[task.type]}</span>
-          <span class="task-weight">${totalWeight} ед.</span>
+          <span class="task-weight">${w} ед.</span>
           ${task.scheduledDate ? `<span>📅 ${task.scheduledDate}${task.scheduledTime ? ' ' + task.scheduledTime : ''}</span>` : ''}
           ${task.deadline ? `<span class="task-deadline-${status}">⏰ ${task.deadline}</span>` : ''}
           ${task.context ? `<span>📍 ${escapeAttr(task.context)}</span>` : ''}
         </div>` : ''}
       </div>
       <div class="task-card-actions-inline">
-        <button class="task-btn-edit conv-action-btn" data-id="${task.id}" title="Редактировать">✏</button>
-        <button class="task-btn-delete conv-action-btn conv-delete-btn" data-id="${task.id}" title="Удалить">✕</button>
+        <button class="task-btn-edit conv-action-btn" title="Редактировать">✏</button>
+        <button class="task-btn-delete conv-action-btn conv-delete-btn" title="Удалить">✕</button>
       </div>
     </div>
   </div>`
@@ -1112,16 +1132,267 @@ function wireTaskCard(el: HTMLElement) {
   const id = el.dataset.taskId!
   const task = tasks.find((t) => t.id === id)!
   el.querySelector<HTMLInputElement>('.task-check')?.addEventListener('change', async (e) => {
-    await updateTask(id, { done: (e.target as HTMLInputElement).checked })
-    await refreshData(); renderTasksSection()
+    await updateTask(id, { done: (e.target as HTMLInputElement).checked }); await refreshData(); renderTasksSection()
   })
-  el.querySelector<HTMLButtonElement>('.task-btn-edit')?.addEventListener('click', () => {
-    editingTask = task; tasksSubView = 'form'; renderTasksSection()
-  })
+  el.querySelector<HTMLButtonElement>('.task-btn-edit')?.addEventListener('click', () => { editingTask = task; tasksSubView = 'task-form'; renderTasksSection() })
   el.querySelector<HTMLButtonElement>('.task-btn-delete')?.addEventListener('click', async () => {
-    if (!confirm(`Удалить задачу «${task.title}»?`)) return
+    if (!confirm(`Удалить «${task.title}»?`)) return
     await deleteTask(id); await refreshData(); renderTasksSection()
   })
+}
+
+// ─── Routines view ───────────────────────────────────────────────────────────
+
+function renderRoutinesView() {
+  const container = document.querySelector<HTMLDivElement>('#tasks-content')!
+  if (!routines.length) { container.innerHTML = '<p class="hint">Рутин пока нет. Создай первую — они будут показываться в календаре каждую неделю.</p>'; return }
+  container.innerHTML = ''
+  for (const r of routines) {
+    const card = document.createElement('div')
+    card.className = 'routine-card'
+    card.style.borderLeftColor = r.color
+    const days = r.daysOfWeek.sort().map((d) => `<span class="day-badge">${DAYS_SHORT[d]}</span>`).join('')
+    card.innerHTML = `
+      <div class="task-card-row">
+        <div style="width:10px;height:10px;border-radius:50%;background:${r.color};flex-shrink:0;margin-top:4px"></div>
+        <div class="task-card-body">
+          <div class="task-card-title">${escapeAttr(r.title)}</div>
+          <div class="task-card-meta">${days}<span class="task-weight">${r.weight} ед.</span>${r.time ? `<span>⏰ ${r.time}</span>` : ''}${r.context ? `<span>📍 ${escapeAttr(r.context)}</span>` : ''}</div>
+        </div>
+        <div class="task-card-actions-inline" style="opacity:1">
+          <button class="r-edit conv-action-btn">✏</button>
+          <button class="r-del conv-action-btn conv-delete-btn">✕</button>
+        </div>
+      </div>`
+    card.querySelector('.r-edit')!.addEventListener('click', () => { editingRoutine = r; tasksSubView = 'routine-form'; renderTasksSection() })
+    card.querySelector('.r-del')!.addEventListener('click', async () => {
+      if (!confirm(`Удалить рутину «${r.title}»?`)) return
+      await deleteRoutine(r.id); await refreshData(); renderTasksSection()
+    })
+    container.appendChild(card)
+  }
+}
+
+function renderRoutineForm(routine?: Routine) {
+  const isEdit = !!routine?.id
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button id="rf-back" class="btn-secondary">← Назад</button>
+        <h2 style="margin:0">${isEdit ? 'Редактировать рутину' : 'Новая рутина'}</h2>
+      </div>
+    </div>
+    <form id="routine-form" class="doc-form">
+      <div class="form-section">
+        <label class="form-label">Название</label>
+        <input id="rf-title" placeholder="Например: Тренировка" value="${escapeAttr(routine?.title ?? '')}" required />
+      </div>
+      <div class="form-section">
+        <label class="form-label">Дни недели</label>
+        <div class="dow-grid">
+          ${[1,2,3,4,5,6,0].map((d) => `<label class="dow-label ${(routine?.daysOfWeek ?? []).includes(d) ? 'active' : ''}"><input type="checkbox" class="dow-check" value="${d}" ${(routine?.daysOfWeek ?? []).includes(d) ? 'checked' : ''} />${DAYS_SHORT[d]}</label>`).join('')}
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-section" style="flex:0 0 140px"><label class="form-label">Время</label><input id="rf-time" type="time" value="${routine?.time ?? ''}" /></div>
+        <div class="form-section" style="flex:0 0 120px"><label class="form-label">Вес (ед.)</label><input id="rf-weight" type="number" min="0.5" step="0.5" value="${routine?.weight ?? 1}" /></div>
+        <div class="form-section" style="flex:1"><label class="form-label">При пропуске</label><select id="rf-onmissed">${(['skip','accumulate','reschedule'] as OnMissed[]).map((v) => `<option value="${v}" ${routine?.onMissed === v ? 'selected' : ''}>${ON_MISSED_LABELS[v]}</option>`).join('')}</select></div>
+      </div>
+      <div class="form-section"><label class="form-label">Контекст</label><input id="rf-context" placeholder="Где происходит?" value="${escapeAttr(routine?.context ?? '')}" /></div>
+      <div class="form-section">
+        <label class="form-label">Цвет</label>
+        <div class="color-picker">${PRESET_COLORS.map((c) => `<button type="button" class="color-dot ${routine?.color === c ? 'selected' : ''}" style="background:${c}" data-color="${c}"></button>`).join('')}</div>
+        <input type="hidden" id="rf-color" value="${routine?.color ?? PRESET_COLORS[0]}" />
+      </div>
+      <div class="form-section"><label class="form-label">Заметки</label><textarea id="rf-notes" rows="2">${escapeAttr(routine?.notes ?? '')}</textarea></div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">${isEdit ? 'Сохранить' : 'Создать рутину'}</button>
+        <button type="button" id="rf-cancel" class="btn-secondary">Отмена</button>
+      </div>
+      <p id="rf-error" class="login-error hidden"></p>
+    </form>
+  </section>`
+
+  const goBack = () => { tasksSubView = 'routines'; editingRoutine = null; renderTasksSection() }
+  document.querySelector('#rf-back')!.addEventListener('click', goBack)
+  document.querySelector('#rf-cancel')!.addEventListener('click', goBack)
+
+  // дни недели — подсветка
+  document.querySelectorAll<HTMLLabelElement>('.dow-label').forEach((lbl) => {
+    const cb = lbl.querySelector<HTMLInputElement>('input')!
+    cb.addEventListener('change', () => lbl.classList.toggle('active', cb.checked))
+  })
+
+  // цвет
+  document.querySelectorAll<HTMLButtonElement>('.color-dot').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.color-dot').forEach((b) => b.classList.remove('selected'))
+      btn.classList.add('selected')
+      document.querySelector<HTMLInputElement>('#rf-color')!.value = btn.dataset.color!
+    })
+  })
+
+  document.querySelector<HTMLFormElement>('#routine-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id)!).value.trim()
+    const daysOfWeek = Array.from(document.querySelectorAll<HTMLInputElement>('.dow-check:checked')).map((c) => Number(c.value))
+    if (!daysOfWeek.length) { const err = document.querySelector<HTMLParagraphElement>('#rf-error')!; err.textContent = 'Выбери хотя бы один день'; err.classList.remove('hidden'); return }
+    const payload = { title: v('#rf-title'), daysOfWeek, time: v('#rf-time') || undefined, weight: parseFloat(v('#rf-weight')) || 1, context: v('#rf-context'), color: v('#rf-color') || PRESET_COLORS[0], onMissed: v('#rf-onmissed') as OnMissed, notes: v('#rf-notes') }
+    try {
+      if (isEdit && routine?.id) await updateRoutine(routine.id, payload)
+      else await createRoutine(payload)
+      await refreshData(); goBack()
+    } catch (err) {
+      const el = document.querySelector<HTMLParagraphElement>('#rf-error')!
+      el.textContent = err instanceof Error ? err.message : 'Ошибка'; el.classList.remove('hidden')
+    }
+  }
+}
+
+// ─── Habits view ─────────────────────────────────────────────────────────────
+
+function getHabitStreak(habitId: string): number {
+  let streak = 0
+  const today = todayStr()
+  for (let i = 0; i >= -365; i--) {
+    const ds = dayStr(addDays(new Date(), i))
+    const log = habitLogs.find((l) => l.habitId === habitId && l.date === ds)
+    if (!log || log.count === 0) {
+      if (ds === today) continue  // сегодня ещё не отмечено — не ломает серию
+      break
+    }
+    streak++
+  }
+  return streak
+}
+
+function renderHabitsView() {
+  const container = document.querySelector<HTMLDivElement>('#tasks-content')!
+  if (!habits.length) { container.innerHTML = '<p class="hint">Привычек пока нет. Создай первую — и начни отслеживать серии!</p>'; return }
+  const today = todayStr()
+  container.innerHTML = ''
+
+  for (const habit of habits) {
+    const todayLog = habitLogs.find((l) => l.habitId === habit.id && l.date === today)
+    const todayCount = todayLog?.count ?? 0
+    const streak = getHabitStreak(habit.id)
+    const done = todayCount >= habit.targetCount
+
+    // 21-day history grid
+    const gridDays = Array.from({ length: 21 }, (_, i) => {
+      const ds = dayStr(addDays(new Date(), -(20 - i)))
+      const log = habitLogs.find((l) => l.habitId === habit.id && l.date === ds)
+      const count = log?.count ?? 0
+      const pct = Math.min(count / habit.targetCount, 1)
+      const alpha = pct === 0 ? '0.1' : pct < 1 ? '0.5' : '1'
+      return `<div class="habit-grid-day" style="background:${habit.color};opacity:${alpha}" title="${ds}: ${count}/${habit.targetCount}"></div>`
+    }).join('')
+
+    const progressDots = Array.from({ length: habit.targetCount }, (_, i) =>
+      `<span class="habit-dot ${i < todayCount ? 'filled' : ''}" style="${i < todayCount ? `background:${habit.color}` : ''}"></span>`
+    ).join('')
+
+    const card = document.createElement('div')
+    card.className = `habit-card ${done ? 'habit-done' : ''}`
+    card.innerHTML = `
+      <div class="habit-card-top">
+        <div class="habit-icon" style="background:${habit.color}20;color:${habit.color}">${habit.icon}</div>
+        <div class="habit-info">
+          <div class="habit-title">${escapeAttr(habit.title)}</div>
+          ${habit.description ? `<div class="habit-desc">${escapeAttr(habit.description)}</div>` : ''}
+          <div class="habit-progress">${progressDots}<span class="habit-count">${todayCount}/${habit.targetCount}</span></div>
+        </div>
+        <div class="habit-right">
+          ${streak > 0 ? `<div class="habit-streak">🔥 ${streak}</div>` : ''}
+          <div class="habit-actions">
+            <button class="habit-plus" style="background:${habit.color}" ${done ? 'disabled' : ''}>+</button>
+            ${todayCount > 0 ? '<button class="habit-minus">−</button>' : ''}
+          </div>
+          <div class="habit-card-btns">
+            <button class="h-edit conv-action-btn">✏</button>
+            <button class="h-del conv-action-btn conv-delete-btn">✕</button>
+          </div>
+        </div>
+      </div>
+      <div class="habit-grid">${gridDays}</div>`
+
+    card.querySelector('.habit-plus')?.addEventListener('click', async () => {
+      await logHabit(habit.id, today, todayCount + 1); await refreshData(); renderHabitsView()
+    })
+    card.querySelector('.habit-minus')?.addEventListener('click', async () => {
+      await logHabit(habit.id, today, Math.max(0, todayCount - 1)); await refreshData(); renderHabitsView()
+    })
+    card.querySelector('.h-edit')!.addEventListener('click', () => { editingHabit = habit; tasksSubView = 'habit-form'; renderTasksSection() })
+    card.querySelector('.h-del')!.addEventListener('click', async () => {
+      if (!confirm(`Удалить привычку «${habit.title}»?`)) return
+      await deleteHabit(habit.id); await refreshData(); renderTasksSection()
+    })
+    container.appendChild(card)
+  }
+}
+
+function renderHabitForm(habit?: Habit) {
+  const isEdit = !!habit?.id
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button id="hf-back" class="btn-secondary">← Назад</button>
+        <h2 style="margin:0">${isEdit ? 'Редактировать привычку' : 'Новая привычка'}</h2>
+      </div>
+    </div>
+    <form id="habit-form" class="doc-form">
+      <div class="form-row">
+        <div class="form-section" style="flex:0 0 80px">
+          <label class="form-label">Иконка</label>
+          <input id="hf-icon" placeholder="😊" value="${habit?.icon ?? '⭐'}" style="text-align:center;font-size:24px;width:64px" maxlength="2" />
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Название привычки</label>
+          <input id="hf-title" placeholder="Например: Зарядка" value="${escapeAttr(habit?.title ?? '')}" required />
+        </div>
+      </div>
+      <div class="form-section"><label class="form-label">Описание (необязательно)</label><input id="hf-desc" placeholder="Подробности..." value="${escapeAttr(habit?.description ?? '')}" /></div>
+      <div class="form-row">
+        <div class="form-section" style="flex:0 0 160px"><label class="form-label">Цель в день (раз)</label><input id="hf-target" type="number" min="1" max="100" value="${habit?.targetCount ?? 1}" /></div>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Цвет</label>
+        <div class="color-picker">${PRESET_COLORS.map((c) => `<button type="button" class="color-dot ${(habit?.color ?? PRESET_COLORS[2]) === c ? 'selected' : ''}" style="background:${c}" data-color="${c}"></button>`).join('')}</div>
+        <input type="hidden" id="hf-color" value="${habit?.color ?? PRESET_COLORS[2]}" />
+      </div>
+      <div class="form-section"><label class="form-label">Заметки</label><textarea id="hf-notes" rows="2">${escapeAttr(habit?.notes ?? '')}</textarea></div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">${isEdit ? 'Сохранить' : 'Создать привычку'}</button>
+        <button type="button" id="hf-cancel" class="btn-secondary">Отмена</button>
+      </div>
+      <p id="hf-error" class="login-error hidden"></p>
+    </form>
+  </section>`
+
+  const goBack = () => { tasksSubView = 'habits'; editingHabit = null; renderTasksSection() }
+  document.querySelector('#hf-back')!.addEventListener('click', goBack)
+  document.querySelector('#hf-cancel')!.addEventListener('click', goBack)
+  document.querySelectorAll<HTMLButtonElement>('.color-dot').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.color-dot').forEach((b) => b.classList.remove('selected'))
+      btn.classList.add('selected')
+      document.querySelector<HTMLInputElement>('#hf-color')!.value = btn.dataset.color!
+    })
+  })
+
+  document.querySelector<HTMLFormElement>('#habit-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement>(id)!).value.trim()
+    try {
+      const payload = { title: v('#hf-title'), description: v('#hf-desc'), icon: v('#hf-icon') || '⭐', color: v('#hf-color') || PRESET_COLORS[2], targetCount: parseInt(v('#hf-target')) || 1, notes: v('#hf-notes') }
+      if (isEdit && habit?.id) await updateHabit(habit.id, payload)
+      else await createHabit(payload)
+      await refreshData(); goBack()
+    } catch (err) {
+      const el = document.querySelector<HTMLParagraphElement>('#hf-error')!
+      el.textContent = err instanceof Error ? err.message : 'Ошибка'; el.classList.remove('hidden')
+    }
+  }
 }
 
 function renderCalendarView() {
@@ -1139,30 +1410,24 @@ function renderCalendarView() {
 
   const grid = `<div class="calendar-grid">${days.map((day) => {
     const ds = dayStr(day)
-    const dayTasks = tasks.filter((t) => {
-      if (t.done || t.skipped) return false
-      if (t.scheduledDate === ds) return true
-      if (t.recurrence && t.scheduledDate) {
-        const start = new Date(t.scheduledDate)
-        const diff = Math.round((day.getTime() - start.getTime()) / 86400000)
-        if (diff <= 0) return false
-        if (t.recurrence === 'daily') return true
-        if (t.recurrence === 'weekly') return diff % 7 === 0
-        if (t.recurrence === 'monthly') return day.getDate() === start.getDate() && diff > 0
-      }
-      return false
-    })
-    const units = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
+    const dow = day.getDay()
+    const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
+    const dayTasks = tasks.filter((t) => !t.done && !t.skipped && t.scheduledDate === ds)
+    const routineUnits = dayRoutines.reduce((s, r) => s + r.weight, 0)
+    const taskUnits = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
+    const units = routineUnits + taskUnits
     const isToday = ds === todayStr()
     const overLimit = dailyLimit > 0 && units > dailyLimit
-    return `<div class="calendar-day ${isToday ? 'today' : ''}" data-date="${ds}">
-      <div class="calendar-day-header">
-        <span class="cal-day-name">${day.toLocaleDateString('ru', { weekday: 'short' })}</span>
-        <span class="cal-day-num ${isToday ? 'today' : ''}">${day.getDate()}</span>
-      </div>
-      ${dailyLimit ? `<div class="cal-units ${overLimit ? 'over-limit' : ''}">${units}/${dailyLimit} ед.</div>` : units > 0 ? `<div class="cal-units">${units} ед.</div>` : ''}
-      <div class="cal-tasks">${dayTasks.map((t) => `<div class="cal-task-chip task-type-${t.type}" data-task-id="${t.id}" title="${escapeAttr(t.title)}">${escapeAttr(t.title.slice(0, 22))}${t.title.length > 22 ? '…' : ''}</div>`).join('')}</div>
-      <button class="cal-add-btn" data-date="${ds}" title="Добавить задачу на ${ds}">+</button>
+    const routineChips = dayRoutines.map((r) => {
+      const log = routineLogs.find((l) => l.routineId === r.id && l.date === ds)
+      return `<div class="cal-routine-chip ${log?.status === 'done' ? 'cal-done' : log?.status === 'skipped' ? 'cal-skipped' : ''}" style="border-left:3px solid ${r.color}" data-routine-id="${r.id}" data-date="${ds}" title="${escapeAttr(r.title)}">${escapeAttr(r.title.slice(0, 18))}${r.title.length > 18 ? '…' : ''}${r.time ? ' ' + r.time : ''}</div>`
+    }).join('')
+    const taskChips = dayTasks.map((t) => `<div class="cal-task-chip task-type-flexible" data-task-id="${t.id}" title="${escapeAttr(t.title)}">${escapeAttr(t.title.slice(0, 18))}${t.title.length > 18 ? '…' : ''}</div>`).join('')
+    return `<div class="calendar-day ${isToday ? 'today' : ''}">
+      <div class="calendar-day-header"><span class="cal-day-name">${DAYS_SHORT[dow]}</span><span class="cal-day-num ${isToday ? 'today' : ''}">${day.getDate()}</span></div>
+      ${dailyLimit ? `<div class="cal-units ${overLimit ? 'over-limit' : ''}">${units}/${dailyLimit}</div>` : units > 0 ? `<div class="cal-units">${units} ед.</div>` : ''}
+      <div class="cal-tasks">${routineChips}${taskChips}</div>
+      <button class="cal-add-btn" data-date="${ds}">+</button>
     </div>`
   }).join('')}</div>`
 
@@ -1170,15 +1435,24 @@ function renderCalendarView() {
   document.querySelector('#cal-prev')!.addEventListener('click', () => { calendarWeekOffset--; renderCalendarView() })
   document.querySelector('#cal-next')!.addEventListener('click', () => { calendarWeekOffset++; renderCalendarView() })
   document.querySelector('#cal-today')?.addEventListener('click', () => { calendarWeekOffset = 0; renderCalendarView() })
+
+  // клик по рутине в календаре — отметить/снять
+  container.querySelectorAll<HTMLElement>('.cal-routine-chip').forEach((chip) => {
+    chip.addEventListener('click', async () => {
+      const rid = chip.dataset.routineId!
+      const date = chip.dataset.date!
+      const log = routineLogs.find((l) => l.routineId === rid && l.date === date)
+      if (log) { await deleteRoutineLog(log.id) }
+      else { await logRoutine(rid, date, 'done') }
+      await refreshData(); renderCalendarView()
+    })
+  })
   container.querySelectorAll<HTMLElement>('.cal-task-chip[data-task-id]').forEach((chip) => {
     const task = tasks.find((t) => t.id === chip.dataset.taskId)
-    if (task) chip.addEventListener('click', () => { editingTask = task; tasksSubView = 'form'; renderTasksSection() })
+    if (task) chip.addEventListener('click', () => { editingTask = task; tasksSubView = 'task-form'; renderTasksSection() })
   })
   container.querySelectorAll<HTMLButtonElement>('.cal-add-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      editingTask = { scheduledDate: btn.dataset.date } as ScheduledTask
-      tasksSubView = 'form'; renderTasksSection()
-    })
+    btn.addEventListener('click', () => { editingTask = { scheduledDate: btn.dataset.date } as ScheduledTask; tasksSubView = 'task-form'; renderTasksSection() })
   })
 }
 
@@ -1192,65 +1466,30 @@ function renderTaskForm(task?: ScheduledTask) {
       </div>
     </div>
     <form id="task-form" class="doc-form">
-      <div class="form-section">
-        <label class="form-label">Название задачи</label>
-        <input id="tf-title" placeholder="Что нужно сделать?" value="${escapeAttr(task?.title ?? '')}" required />
+      <div class="form-section"><label class="form-label">Что нужно сделать?</label>
+        <input id="tf-title" placeholder="Название задачи" value="${escapeAttr(task?.title ?? '')}" required /></div>
+      <div class="form-row">
+        <div class="form-section" style="flex:0 0 130px"><label class="form-label">Вес (ед.)</label>
+          <input id="tf-weight" type="number" min="0.5" step="0.5" value="${task?.weight ?? 1}" /></div>
+        <div class="form-section" style="flex:1"><label class="form-label">При пропуске</label>
+          <select id="tf-onmissed">${(['skip','accumulate','reschedule'] as OnMissed[]).map((v) => `<option value="${v}" ${(task?.onMissed ?? 'reschedule') === v ? 'selected' : ''}>${ON_MISSED_LABELS[v]}</option>`).join('')}</select></div>
       </div>
       <div class="form-row">
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Тип</label>
-          <select id="tf-type">
-            ${(['fixed','flexible','periodic'] as TaskType[]).map((t) => `<option value="${t}" ${task?.type === t ? 'selected' : ''}>${TASK_TYPE_LABELS[t]}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Сложность (ед.)</label>
-          <input id="tf-weight" type="number" min="0.5" step="0.5" value="${task?.weight ?? 1}" />
-        </div>
-        <div class="form-section" style="flex:1">
-          <label class="form-label">При пропуске</label>
-          <select id="tf-onmissed">
-            ${(['skip','accumulate','reschedule'] as OnMissed[]).map((v) => `<option value="${v}" ${task?.onMissed === v ? 'selected' : ''}>${ON_MISSED_LABELS[v]}</option>`).join('')}
-          </select>
-        </div>
+        <div class="form-section" style="flex:1"><label class="form-label">Запланировать на</label>
+          <input id="tf-date" type="date" value="${task?.scheduledDate ?? ''}" /></div>
+        <div class="form-section" style="flex:0 0 130px"><label class="form-label">Время</label>
+          <input id="tf-time" type="time" value="${task?.scheduledTime ?? ''}" /></div>
+        <div class="form-section" style="flex:1"><label class="form-label">Дедлайн</label>
+          <input id="tf-deadline" type="date" value="${task?.deadline ?? ''}" /></div>
       </div>
       <div class="form-row">
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Запланировано на</label>
-          <input id="tf-date" type="date" value="${task?.scheduledDate ?? ''}" />
-        </div>
-        <div class="form-section" style="flex:0 0 120px">
-          <label class="form-label">Время</label>
-          <input id="tf-time" type="time" value="${task?.scheduledTime ?? ''}" />
-        </div>
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Дедлайн</label>
-          <input id="tf-deadline" type="date" value="${task?.deadline ?? ''}" />
-        </div>
+        <div class="form-section" style="flex:1"><label class="form-label">Контекст</label>
+          <input id="tf-context" placeholder="Дома, в офисе..." value="${escapeAttr(task?.context ?? '')}" /></div>
+        <div class="form-section" style="flex:1"><label class="form-label">Условия</label>
+          <input id="tf-conditions" placeholder="Нужен интернет..." value="${escapeAttr(task?.conditions ?? '')}" /></div>
       </div>
-      <div class="form-row">
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Контекст (где)</label>
-          <input id="tf-context" placeholder="Дома, в офисе, на улице..." value="${escapeAttr(task?.context ?? '')}" />
-        </div>
-        <div class="form-section" style="flex:1">
-          <label class="form-label">Условия</label>
-          <input id="tf-conditions" placeholder="Нужен интернет, тихая обстановка..." value="${escapeAttr(task?.conditions ?? '')}" />
-        </div>
-      </div>
-      <div class="form-section">
-        <label class="form-label">Повторение (для периодической)</label>
-        <select id="tf-recurrence">
-          <option value="">Без повторения</option>
-          <option value="daily" ${task?.recurrence === 'daily' ? 'selected' : ''}>Каждый день</option>
-          <option value="weekly" ${task?.recurrence === 'weekly' ? 'selected' : ''}>Каждую неделю</option>
-          <option value="monthly" ${task?.recurrence === 'monthly' ? 'selected' : ''}>Каждый месяц</option>
-        </select>
-      </div>
-      <div class="form-section">
-        <label class="form-label">Заметки</label>
-        <textarea id="tf-notes" rows="3" placeholder="Дополнительные детали...">${escapeAttr(task?.notes ?? '')}</textarea>
-      </div>
+      <div class="form-section"><label class="form-label">Заметки</label>
+        <textarea id="tf-notes" rows="2" placeholder="Детали...">${escapeAttr(task?.notes ?? '')}</textarea></div>
       <div class="form-actions">
         <button type="submit" class="btn-primary">${isEdit ? 'Сохранить' : 'Создать задачу'}</button>
         <button type="button" id="task-form-cancel" class="btn-secondary">Отмена</button>
@@ -1259,7 +1498,7 @@ function renderTaskForm(task?: ScheduledTask) {
     </form>
   </section>`
 
-  const goBack = () => { tasksSubView = 'backlog'; editingTask = null; renderTasksSection() }
+  const goBack = () => { tasksSubView = 'tasks'; editingTask = null; renderTasksSection() }
   document.querySelector('#task-form-back')!.addEventListener('click', goBack)
   document.querySelector('#task-form-cancel')!.addEventListener('click', goBack)
   document.querySelector<HTMLFormElement>('#task-form')!.onsubmit = async (e) => {
@@ -1267,24 +1506,12 @@ function renderTaskForm(task?: ScheduledTask) {
     const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id)!).value.trim()
     const errEl = document.querySelector<HTMLParagraphElement>('#task-form-error')!
     try {
-      const payload = {
-        title: v('#tf-title'), type: v('#tf-type') as TaskType,
-        weight: parseFloat(v('#tf-weight')) || 1,
-        onMissed: v('#tf-onmissed') as OnMissed,
-        scheduledDate: v('#tf-date') || undefined,
-        scheduledTime: v('#tf-time') || undefined,
-        deadline: v('#tf-deadline') || undefined,
-        context: v('#tf-context'), conditions: v('#tf-conditions'),
-        recurrence: v('#tf-recurrence') || undefined,
-        notes: v('#tf-notes'),
-        done: false, skipped: false, accumulation: 0
-      }
+      const payload = { title: v('#tf-title'), weight: parseFloat(v('#tf-weight')) || 1, onMissed: v('#tf-onmissed') as OnMissed, scheduledDate: v('#tf-date') || undefined, scheduledTime: v('#tf-time') || undefined, deadline: v('#tf-deadline') || undefined, context: v('#tf-context'), conditions: v('#tf-conditions'), notes: v('#tf-notes'), done: false, skipped: false, accumulation: 0 }
       if (isEdit && task?.id) await updateTask(task.id, payload)
       else await createTask(payload)
       await refreshData(); goBack()
     } catch (err) {
-      errEl.textContent = err instanceof Error ? err.message : 'Ошибка'
-      errEl.classList.remove('hidden')
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка'; errEl.classList.remove('hidden')
     }
   }
 }
@@ -1307,7 +1534,7 @@ function renderDailyReview() {
     </div>`}
   </section>`
 
-  document.querySelector('#review-back')!.addEventListener('click', () => { tasksSubView = 'backlog'; renderTasksSection() })
+  document.querySelector('#review-back')!.addEventListener('click', () => { tasksSubView = 'tasks'; renderTasksSection() })
   if (!yesterdayTasks.length) return
 
   const list = document.querySelector<HTMLDivElement>('#review-list')!
@@ -1732,12 +1959,12 @@ function renderTodoRow(list: HTMLElement, todo: TodoItem) {
 
 async function refreshData() {
   try {
-    ;[documents, todos, instructions, tasks] = await Promise.all([listDocuments(), listTodos(), listInstructions(), listTasks()])
+    const startDate = dayStr(addDays(new Date(), -30))
+  ;[documents, todos, instructions, tasks, routines, routineLogs, habits, habitLogs] = await Promise.all([listDocuments(), listTodos(), listInstructions(), listTasks(), listRoutines(), listRoutineLogs(startDate), listHabits(), listHabitLogs(startDate)])
   } catch {
     documents = []
-    todos = []
+    todos = []; tasks = []; routines = []; routineLogs = []; habits = []; habitLogs = []
     instructions = []
-    tasks = []
   }
 }
 

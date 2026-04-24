@@ -50,6 +50,51 @@ export interface TodoItem {
 export type TaskType = 'fixed' | 'flexible' | 'periodic'
 export type OnMissed = 'skip' | 'accumulate' | 'reschedule'
 
+export interface Routine {
+  id: string
+  title: string
+  daysOfWeek: number[]   // 0=вс, 1=пн, 2=вт, 3=ср, 4=чт, 5=пт, 6=сб
+  time?: string
+  weight: number
+  context: string
+  color: string
+  onMissed: OnMissed
+  notes: string
+  tags?: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface RoutineLog {
+  id: string
+  routineId: string
+  date: string           // YYYY-MM-DD
+  status: 'done' | 'skipped'
+  createdAt: number
+}
+
+export interface Habit {
+  id: string
+  title: string
+  description: string
+  icon: string
+  color: string
+  targetCount: number    // сколько раз в день
+  daysOfWeek?: number[]  // если пусто — каждый день
+  notes: string
+  tags?: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface HabitLog {
+  id: string
+  habitId: string
+  date: string           // YYYY-MM-DD
+  count: number
+  createdAt: number
+}
+
 export interface ScheduledTask {
   id: string
   title: string
