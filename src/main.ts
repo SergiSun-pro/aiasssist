@@ -489,8 +489,8 @@ card.innerHTML = `<div class="task-proposal-header"><span class="task-proposal-i
         imageDataUrl: aiImageDataUrl,
         systemPrompt: buildDocumentSystemPrompt()
       })
-      const taskMatch = reply.match(/\[TASK\]([\s\S]*?)\[\/TASK\]/)
-      const cleanReply = reply.replace(/\[TASK\][\s\S]*?\[\/TASK\]/, '').trim()
+      const taskMatch = reply.match(/\[TASK\]([\s\S]*?)\[\/TASK\]/i)
+      const cleanReply = reply.replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
       const aiMsg: ChatMessage = { id: createId(), role: 'assistant', content: cleanReply, createdAt: Date.now(), model: getCurrentModel() }
       if (taskMatch) {
         try {
@@ -1139,7 +1139,19 @@ function renderCalendarView() {
 
   const grid = `<div class="calendar-grid">${days.map((day) => {
     const ds = dayStr(day)
-    const dayTasks = tasks.filter((t) => t.scheduledDate === ds && !t.done && !t.skipped)
+    const dayTasks = tasks.filter((t) => {
+      if (t.done || t.skipped) return false
+      if (t.scheduledDate === ds) return true
+      if (t.recurrence && t.scheduledDate) {
+        const start = new Date(t.scheduledDate)
+        const diff = Math.round((day.getTime() - start.getTime()) / 86400000)
+        if (diff <= 0) return false
+        if (t.recurrence === 'daily') return true
+        if (t.recurrence === 'weekly') return diff % 7 === 0
+        if (t.recurrence === 'monthly') return day.getDate() === start.getDate() && diff > 0
+      }
+      return false
+    })
     const units = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
     const isToday = ds === todayStr()
     const overLimit = dailyLimit > 0 && units > dailyLimit
@@ -1748,7 +1760,7 @@ function openImageFullscreen(src: string) {
 }
 
 function buildDocumentSystemPrompt(): string {
-  if (documents.length === 0 && todos.length === 0) return 'Ты персональный ассистент. Документов пока нет.'
+  if (documents.length === 0 && todos.length === 0 && tasks.length === 0) return 'Ты личный ассистент пользователя. Общайся дружески, как умный друг. На "ты", без официоза.'
   const docLines = documents.map((d) => {
     const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `    ${k}: ${v}`).join('\n')
     return [
@@ -1778,14 +1790,21 @@ function buildDocumentSystemPrompt(): string {
   ].filter(Boolean).join('\n') : ''
 
   return [
-    'Ты персональный ассистент.',
+    'Ты — личный ассистент пользователя. Общайся дружески, по-человечески, без официоза. Как умный друг, который хорошо знает своего товарища. Можно неформально, с заботой, иногда с лёгким юмором. Никакого "Вы", "Позвольте", "Разумеется". Просто "ты", просто по делу.',
     todoRulesText,
     'ДОКУМЕНТЫ ПОЛЬЗОВАТЕЛЯ:',
     docLines || 'нет',
     todoLines ? `АКТИВНЫЕ НАПОМИНАНИЯ:\n${todoLines}` : '',
-    instrLines ? `ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ (${instructions.length}):\n${instrLines}` : '',
+    instrLines ? `ИНСТРУКЦИИ (${instructions.length}):\n${instrLines}` : '',
     buildTasksContext(),
-    'ПРАВИЛА:\n- Когда спрашивают об инструкции — излагай шаги последовательно или все сразу. Анализируй и объясняй.\n- Если в инструкции нужны документы — показывай их данные.\n- Фото документа уже отображается в интерфейсе. Не говори что не можешь показать фото. Не пиши markdown ![]().\n- ЗАДАЧИ: когда пользователь упоминает дело, задачу, встречу, план — в КОНЦЕ ответа добавь блок:\n[TASK]{"title":"...","type":"fixed|flexible|periodic","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD или пусто","scheduledTime":"HH:MM или пусто","onMissed":"skip|accumulate|reschedule","recurrence":"daily|weekly|monthly или пусто","notes":"..."}[/TASK]\nЕсли информации недостаточно — задай уточняющий вопрос. Если это просто общий разговор без конкретного дела — не добавляй блок.'
+    `ПРАВИЛА:
+- Инструкции: разбирай шаги с пояснениями, не просто воспроизводи текст. Если нужны документы из базы — показывай их данные.
+- Фото документа уже показывается в интерфейсе автоматически. Не говори что не можешь показать. Не пиши markdown ![](). Просто скажи "Вот фото:" и опиши.
+- ЗАДАЧИ: когда пользователь упоминает конкретное дело, встречу, задачу или план — в КОНЦЕ ответа добавь один блок (без текста вокруг него):
+[TASK]{"title":"...","type":"fixed|flexible|periodic","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD — ОБЯЗАТЕЛЬНО для fixed и periodic, первая дата","scheduledTime":"HH:MM или пусто","onMissed":"skip|accumulate|reschedule","recurrence":"daily|weekly|monthly или пусто","notes":"..."}[/TASK]
+- Если одно событие повторяется в разные дни (напр. среда И воскресенье) — создай ОТДЕЛЬНЫЙ [TASK] блок для каждого дня.
+- Если информации недостаточно (нет даты для фиксированной) — уточни, не добавляй блок.
+- Если просто общий разговор без конкретного дела — не добавляй [TASK].`
   ].filter(Boolean).join('\n\n')
 }
 
