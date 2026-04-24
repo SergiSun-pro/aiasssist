@@ -1115,6 +1115,41 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .color-dot:hover { transform: scale(1.15); }
 .color-dot.selected { border-color: var(--text); transform: scale(1.15); }
 
+/* === Routine action menu === */
+.routine-action-menu {
+  position: fixed;
+  z-index: 200;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rma-title { font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
+.rma-btn { background: none; border: none; padding: 7px 12px; border-radius: var(--radius-sm); text-align: left; font-size: 13px; cursor: pointer; color: var(--text); width: 100%; }
+.rma-btn:hover { background: var(--panel-2); }
+.rma-done:hover { background: #dcfce7; color: #15803d; }
+.rma-move:hover { background: var(--accent-soft); color: var(--accent); }
+.rma-skip:hover { background: #fee2e2; color: #dc2626; }
+
+/* === Reschedule modal === */
+.reschedule-suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+.reschedule-day-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--line);
+  background: var(--panel); cursor: pointer; transition: all 0.15s;
+}
+.reschedule-day-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.reschedule-day-btn.selected { border-color: var(--accent); background: var(--accent-soft); }
+.reschedule-day-btn.over-limit { border-color: #fca5a5; }
+.rd-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.rd-load { font-size: 11px; color: var(--muted); }
+.rd-load.warn { color: #f59e0b; font-weight: 600; }
+
 /* === Habits === */
 .habit-card { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 10px; background: var(--panel); transition: box-shadow 0.15s; }
 .habit-card:hover { box-shadow: var(--shadow-sm); }

@@ -1152,6 +1152,137 @@ function renderTasksSection() {
   else renderBacklogView()
 }
 
+function calcDayLoad(date: string): number {
+  const dow = new Date(date).getDay()
+  const taskLoad = tasks.filter((t) => t.scheduledDate === date && !t.done && !t.skipped).reduce((s, t) => s + t.weight + t.accumulation, 0)
+  const routineLoad = routines.filter((r) => r.daysOfWeek.includes(dow)).reduce((s, r) => s + r.weight, 0)
+  return taskLoad + routineLoad
+}
+
+function suggestRescheduleDates(routine: Routine, originalDate: string, count = 4): Array<{ date: string; load: number }> {
+  const result: Array<{ date: string; load: number }> = []
+  for (let i = 1; i <= 10 && result.length < count; i++) {
+    const d = addDays(new Date(originalDate), i)
+    const ds = dayStr(d)
+    if (routine.daysOfWeek.includes(d.getDay())) continue // плановый день и так будет
+    result.push({ date: ds, load: calcDayLoad(ds) })
+  }
+  return result.sort((a, b) => a.load - b.load)
+}
+
+function showRoutineActionMenu(routine: Routine, date: string, anchor: HTMLElement) {
+  document.querySelector('.routine-action-menu')?.remove()
+  const log = routineLogs.find((l) => l.routineId === routine.id && l.date === date)
+  const menu = document.createElement('div')
+  menu.className = 'routine-action-menu'
+  const rect = anchor.getBoundingClientRect()
+  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${Math.min(rect.left, window.innerWidth - 200)}px`
+
+  if (log) {
+    menu.innerHTML = `<button class="rma-btn">↩ Снять отметку</button>`
+    menu.querySelector('.rma-btn')!.addEventListener('click', async () => {
+      await deleteRoutineLog(log.id); await refreshData(); menu.remove(); renderCalendarView()
+    })
+  } else {
+    menu.innerHTML = `
+      <div class="rma-title">${escapeAttr(routine.title)}</div>
+      <button class="rma-btn rma-done">✓ Выполнено</button>
+      <button class="rma-btn rma-move">↷ Перенести</button>
+      <button class="rma-btn rma-skip">✗ Пропустить</button>`
+    menu.querySelector('.rma-done')!.addEventListener('click', async () => {
+      await logRoutine(routine.id, date, 'done'); await refreshData(); menu.remove(); renderCalendarView()
+    })
+    menu.querySelector('.rma-skip')!.addEventListener('click', async () => {
+      await logRoutine(routine.id, date, 'skipped'); await refreshData(); menu.remove(); renderCalendarView()
+    })
+    menu.querySelector('.rma-move')!.addEventListener('click', () => {
+      menu.remove(); showRescheduleModal(routine, date)
+    })
+  }
+
+  document.body.appendChild(menu)
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 50)
+}
+
+function showRescheduleModal(routine: Routine, originalDate: string) {
+  const suggestions = suggestRescheduleDates(routine, originalDate)
+  const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
+  const origLabel = new Date(originalDate).toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'short' })
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const suggBtns = suggestions.map(({ date, load }) => {
+    const label = new Date(date).toLocaleDateString('ru', { weekday: 'short', day: 'numeric', month: 'short' })
+    const over = dailyLimit > 0 && load > dailyLimit
+    return `<button class="reschedule-day-btn ${over ? 'over-limit' : ''}" data-date="${date}">
+      <span class="rd-label">${label}</span>
+      <span class="rd-load ${over ? 'warn' : ''}">${load}${dailyLimit ? '/' + dailyLimit : ''} ед.</span>
+    </button>`
+  }).join('')
+
+  overlay.innerHTML = `
+    <div class="modal-box" style="max-width:420px">
+      <div class="modal-header"><h2>Перенести</h2><button id="rm-close" class="modal-close">✕</button></div>
+      <p style="color:var(--text-secondary);font-size:14px;margin:0 0 16px">«${escapeAttr(routine.title)}» — ${origLabel}</p>
+      <label class="form-label">Предложения (отсортированы по нагрузке)</label>
+      <div class="reschedule-suggestions">${suggBtns}</div>
+      <div class="form-section" style="margin-top:12px">
+        <label class="form-label">Другая дата</label>
+        <input type="date" id="rm-custom-date" />
+      </div>
+      <div class="form-actions">
+        <button id="rm-confirm" class="btn-primary">Перенести</button>
+        <button id="rm-cancel" class="btn-secondary">Отмена</button>
+      </div>
+    </div>`
+
+  document.body.appendChild(overlay)
+  let selectedDate = suggestions[0]?.date ?? ''
+  const allBtns = overlay.querySelectorAll<HTMLButtonElement>('.reschedule-day-btn')
+  allBtns[0]?.classList.add('selected')
+
+  allBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      allBtns.forEach((b) => b.classList.remove('selected'))
+      btn.classList.add('selected')
+      selectedDate = btn.dataset.date!
+      ;(overlay.querySelector('#rm-custom-date') as HTMLInputElement).value = ''
+    })
+  })
+  overlay.querySelector<HTMLInputElement>('#rm-custom-date')!.addEventListener('input', (e) => {
+    selectedDate = (e.target as HTMLInputElement).value
+    allBtns.forEach((b) => b.classList.remove('selected'))
+  })
+
+  const close = () => overlay.remove()
+  overlay.querySelector('#rm-close')!.addEventListener('click', close)
+  overlay.querySelector('#rm-cancel')!.addEventListener('click', close)
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+
+  overlay.querySelector('#rm-confirm')!.addEventListener('click', async () => {
+    if (!selectedDate) { alert('Выбери дату'); return }
+    const overLimit = dailyLimit > 0 && calcDayLoad(selectedDate) > dailyLimit
+    if (overLimit && !confirm(`На этот день нагрузка превысит лимит (${dailyLimit} ед.). Всё равно перенести?`)) return
+    await logRoutine(routine.id, originalDate, 'skipped')
+    const dow = new Date(originalDate).getDay()
+    const dayTime = routine.times?.[String(dow)] ?? routine.time
+    await createTask({
+      title: routine.title + ' ↷',
+      weight: routine.weight,
+      context: routine.context,
+      conditions: '',
+      scheduledDate: selectedDate,
+      scheduledTime: dayTime,
+      onMissed: 'skip',
+      accumulation: 0,
+      done: false,
+      skipped: false,
+      notes: `Перенос с ${originalDate}`
+    })
+    await refreshData(); close(); renderCalendarView()
+  })
+}
+
 function renderBacklogView() {
   const container = document.querySelector<HTMLDivElement>('#tasks-content')!
   const backlog = tasks.filter((t) => !t.scheduledDate && !t.done && !t.skipped)
@@ -1519,15 +1650,12 @@ function renderCalendarView() {
   document.querySelector('#cal-next')!.addEventListener('click', () => { calendarWeekOffset++; renderCalendarView() })
   document.querySelector('#cal-today')?.addEventListener('click', () => { calendarWeekOffset = 0; renderCalendarView() })
 
-  // клик по рутине в календаре — отметить/снять
+  // клик по рутине — меню действий
   container.querySelectorAll<HTMLElement>('.cal-routine-chip').forEach((chip) => {
-    chip.addEventListener('click', async () => {
-      const rid = chip.dataset.routineId!
-      const date = chip.dataset.date!
-      const log = routineLogs.find((l) => l.routineId === rid && l.date === date)
-      if (log) { await deleteRoutineLog(log.id) }
-      else { await logRoutine(rid, date, 'done') }
-      await refreshData(); renderCalendarView()
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const routine = routines.find((r) => r.id === chip.dataset.routineId)!
+      showRoutineActionMenu(routine, chip.dataset.date!, chip)
     })
   })
   container.querySelectorAll<HTMLElement>('.cal-task-chip[data-task-id]').forEach((chip) => {
