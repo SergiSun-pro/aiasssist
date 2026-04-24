@@ -413,7 +413,7 @@ function renderChat() {
       const img = item.querySelector<HTMLImageElement>('.message-image')!
       img.onclick = () => openImageFullscreen(m.displayImage!)
     }
-    item.querySelector('pre')!.textContent = m.content.replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
+    item.querySelector('pre')!.textContent = m.content.replace(/\[(TASK|ROUTINE|HABIT)\][\s\S]*?\[\/\1\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
     messagesEl.appendChild(item)
     if (m.taskProposal) {
       const p = m.taskProposal as Record<string, unknown>
@@ -455,6 +455,43 @@ function renderChat() {
       })
       card.querySelector('.task-proposal-dismiss')!.addEventListener('click', () => card.remove())
       messagesEl.appendChild(card)
+    }
+
+    // карточка предложения рутины
+    if (m.routineProposal) {
+      const r = m.routineProposal as Record<string, unknown>
+      const days = (Array.isArray(r.daysOfWeek) ? r.daysOfWeek as number[] : []).map((d) => DAYS_SHORT[d]).join(', ')
+      const rcard = document.createElement('div')
+      rcard.className = 'task-proposal-card'
+      rcard.style.borderColor = String(r.color ?? '#4f46e5')
+      rcard.innerHTML = `
+        <div class="task-proposal-header"><span class="task-proposal-icon">🔁</span><span>Предлагаемая рутина</span></div>
+        <div class="task-proposal-title">${escapeAttr(String(r.title ?? ''))}</div>
+        <div class="task-proposal-meta">
+          <span class="task-type-badge task-type-periodic">Рутина</span>
+          <span>${r.weight ?? 1} ед.</span>
+          ${days ? `<span>📅 ${days}</span>` : ''}
+          ${r.time ? `<span>⏰ ${r.time}</span>` : ''}
+          ${r.context ? `<span>📍 ${escapeAttr(String(r.context))}</span>` : ''}
+        </div>
+        ${r.notes ? `<div class="task-proposal-notes">${escapeAttr(String(r.notes))}</div>` : ''}
+        <div class="task-proposal-actions">
+          <button class="btn-primary rp-save">✓ Добавить рутину</button>
+          <button class="btn-secondary rp-edit">✏ Изменить</button>
+          <button class="btn-secondary rp-dismiss">✕</button>
+        </div>`
+      rcard.querySelector('.rp-save')!.addEventListener('click', async () => {
+        await createRoutine(r as Parameters<typeof createRoutine>[0])
+        await refreshData()
+        rcard.innerHTML = '<div style="padding:8px 12px;color:var(--accent);font-size:13px">✓ Рутина добавлена</div>'
+      })
+      rcard.querySelector('.rp-edit')!.addEventListener('click', () => {
+        editingRoutine = { id: '', title: '', createdAt: 0, updatedAt: 0, notes: '', context: '', color: '#4f46e5', daysOfWeek: [], weight: 1, onMissed: 'skip' } as Routine
+        Object.assign(editingRoutine, r)
+        tasksSubView = 'routine-form'; setTab('tasks')
+      })
+      rcard.querySelector('.rp-dismiss')!.addEventListener('click', () => rcard.remove())
+      messagesEl.appendChild(rcard)
     }
   }
   messagesEl.scrollTop = messagesEl.scrollHeight
@@ -509,14 +546,17 @@ function renderChat() {
         systemPrompt: buildDocumentSystemPrompt()
       })
       const taskMatch = reply.match(/\[TASK\]([\s\S]*?)\[\/TASK\]/i)
-      const cleanReply = reply.replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '').replace(/\n{3,}/g, '\n\n').trim()
+      const routineMatch = reply.match(/\[ROUTINE\]([\s\S]*?)\[\/ROUTINE\]/i)
+      const habitMatch = reply.match(/\[HABIT\]([\s\S]*?)\[\/HABIT\]/i)
+      const cleanReply = reply
+        .replace(/\[TASK\][\s\S]*?\[\/TASK\]/gi, '')
+        .replace(/\[ROUTINE\][\s\S]*?\[\/ROUTINE\]/gi, '')
+        .replace(/\[HABIT\][\s\S]*?\[\/HABIT\]/gi, '')
+        .replace(/\n{3,}/g, '\n\n').trim()
       const aiMsg: ChatMessage = { id: createId(), role: 'assistant', content: cleanReply, createdAt: Date.now(), model: getCurrentModel() }
-      if (taskMatch) {
-        try {
-          const parsed = JSON.parse(taskMatch[1].trim())
-          aiMsg.taskProposal = parsed
-        } catch { /* invalid JSON, ignore */ }
-      }
+      if (taskMatch) { try { aiMsg.taskProposal = JSON.parse(taskMatch[1].trim()) } catch { /* ignore */ } }
+      if (routineMatch) { try { aiMsg.routineProposal = JSON.parse(routineMatch[1].trim()) } catch { /* ignore */ } }
+      if (habitMatch) { try { aiMsg.taskProposal = { ...JSON.parse(habitMatch[1].trim()), _type: 'habit' } } catch { /* ignore */ } }
       currentConversation.messages.push(aiMsg)
     } catch (error) {
       currentConversation.messages.push({ id: createId(), role: 'assistant', content: `Ошибка: ${error instanceof Error ? error.message : 'Unknown error'}`, createdAt: Date.now() })
@@ -2025,13 +2065,22 @@ function buildDocumentSystemPrompt(): string {
     instrLines ? `ИНСТРУКЦИИ (${instructions.length}):\n${instrLines}` : '',
     buildTasksContext(),
     `ПРАВИЛА:
-- Инструкции: разбирай шаги с пояснениями, не просто воспроизводи текст. Если нужны документы из базы — показывай их данные.
-- Фото документа уже показывается в интерфейсе автоматически. Не говори что не можешь показать. Не пиши markdown ![](). Просто скажи "Вот фото:" и опиши.
-- ЗАДАЧИ: когда пользователь упоминает конкретное дело, встречу, задачу или план — в КОНЦЕ ответа добавь один блок (без текста вокруг него):
-[TASK]{"title":"...","type":"fixed|flexible|periodic","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD — ОБЯЗАТЕЛЬНО для fixed и periodic, первая дата","scheduledTime":"HH:MM или пусто","onMissed":"skip|accumulate|reschedule","recurrence":"daily|weekly|monthly или пусто","notes":"..."}[/TASK]
-- Если одно событие повторяется в разные дни (напр. среда И воскресенье) — создай ОТДЕЛЬНЫЙ [TASK] блок для каждого дня.
-- Если информации недостаточно (нет даты для фиксированной) — уточни, не добавляй блок.
-- Если просто общий разговор без конкретного дела — не добавляй [TASK].`
+- Инструкции: разбирай шаги с пояснениями. Если нужны документы — показывай их данные.
+- Фото документа уже показывается в интерфейсе. Не говори что не можешь показать. Не пиши markdown ![](). Скажи "Вот фото:" и опиши.
+
+КОГДА ДОБАВЛЯТЬ БЛОКИ В КОНЕЦ ОТВЕТА:
+
+▶ РУТИНА — если дело ПОВТОРЯЕТСЯ регулярно (каждую неделю, каждый день, по дням недели):
+[ROUTINE]{"title":"...","daysOfWeek":[1,3,5],"time":"HH:MM или пусто","weight":1,"context":"...","color":"#4f46e5","onMissed":"skip","notes":"..."}[/ROUTINE]
+daysOfWeek: 0=вс,1=пн,2=вт,3=ср,4=чт,5=пт,6=сб. ВСЕ дни недели — в ОДНОМ блоке. НЕ создавай отдельный блок на каждый день!
+
+▶ ЗАДАЧА — если дело ОДНОРАЗОВОЕ (с дедлайном, без повторения):
+[TASK]{"title":"...","weight":1,"context":"...","conditions":"...","deadline":"YYYY-MM-DD или пусто","scheduledDate":"YYYY-MM-DD или пусто","scheduledTime":"HH:MM или пусто","onMissed":"reschedule","notes":"..."}[/TASK]
+
+▶ ПРИВЫЧКА — если ежедневная практика для трекинга серий (зарядка, вода, чтение):
+[HABIT]{"title":"...","description":"...","icon":"😊","color":"#10b981","targetCount":1,"notes":"..."}[/HABIT]
+
+Если информации недостаточно — уточни, не добавляй блок. Если просто разговор — не добавляй блоки.`
   ].filter(Boolean).join('\n\n')
 }
 

@@ -9,6 +9,7 @@ export interface ChatMessage {
   attachmentName?: string
   displayImage?: string
   taskProposal?: Record<string, unknown>
+  routineProposal?: Record<string, unknown>
 }
 
 export interface Conversation {
