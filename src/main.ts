@@ -1164,7 +1164,7 @@ function renderTasksSection() {
 
 function extractReviewDate(text: string): string | null {
   const lower = text.toLowerCase()
-  const keywords = ['итог дня', 'подвести итог', 'разбор дня', 'итоги за', 'что я сделал', 'итог за']
+  const keywords = ['итог дня', 'итоги дня', 'подвести итог', 'подведем итог', 'подведём итог', 'подведи итог', 'разбор дня', 'итоги за', 'итоги сегодня', 'что я сделал', 'итог за', 'подводим итог', 'давай итог']
   if (!keywords.some((kw) => lower.includes(kw))) return null
   if (lower.includes('вчера')) return dayStr(addDays(new Date(), -1))
   if (lower.includes('сегодня')) return todayStr()
@@ -2393,7 +2393,7 @@ function openImageFullscreen(src: string) {
 }
 
 function buildDocumentSystemPrompt(): string {
-  if (documents.length === 0 && todos.length === 0 && tasks.length === 0) return `Ты — Chief of Staff пользователя. Сегодня ${new Date().toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}. Общайся на «ты», лаконично, без канцелярита. Данных в базе пока нет.`
+  if (documents.length === 0 && todos.length === 0 && tasks.length === 0) return `Ты — Chief of Staff пользователя. СЕГОДНЯ: ${todayStr()}. Общайся на «ты», лаконично, без канцелярита. Данных в базе пока нет.`
   const docLines = documents.map((d) => {
     const fields = Object.entries(d.fields ?? {}).map(([k, v]) => `    ${k}: ${v}`).join('\n')
     return [
@@ -2423,7 +2423,7 @@ function buildDocumentSystemPrompt(): string {
   ].filter(Boolean).join('\n') : ''
 
   return [
-    `ОРИЕНТИР ВРЕМЕНИ: сегодня ${new Date().toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}. Используй эту дату для расчёта K и актуальности.
+    `СЕГОДНЯ: ${todayStr()} (${new Date().toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}). Используй эту дату для всех расчётов K и срочности. Не используй никакую другую дату как "сегодня".
 
 РОЛЬ: Ты — Chief of Staff (руководитель аппарата). Твоя задача — фильтровать шум и управлять вниманием пользователя. Ты не просто хранишь данные — ты оцениваешь их значимость в контексте времени и ситуации. Общайся на «ты», лаконично, по-человечески, без канцелярита.
 
