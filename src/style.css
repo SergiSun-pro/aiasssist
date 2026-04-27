@@ -984,6 +984,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* === Tasks === */
 
+.review-btn-group { display: flex; align-items: center; gap: 0; }
+.review-btn-group .btn-secondary { border-radius: var(--radius-sm) 0 0 var(--radius-sm); border-right: none; }
+.review-date-input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 13px; background: var(--panel-2); color: var(--text); height: 36px; cursor: pointer; }
+.review-date-input:focus { outline: none; border-color: var(--accent); }
+
 .tasks-sub-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
 .tasks-sub-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 16px; font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; margin-bottom: -1px; }
 .tasks-sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }

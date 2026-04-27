@@ -40,6 +40,7 @@ let editingTask: ScheduledTask | null = null
 let editingRoutine: Routine | null = null
 let editingHabit: Habit | null = null
 let calendarWeekOffset = 0
+let reviewTargetDate = ''
 
 const DAYS_SHORT = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб']
 const PRESET_COLORS = ['#4f46e5','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#f97316']
@@ -1129,8 +1130,11 @@ function renderTasksSection() {
   contentRoot.innerHTML = `<section class="documents tasks-section">
     <div class="page-header-row">
       <div><h2>Планирование</h2><p class="page-subtitle">Сегодня: ${totalUnits}${dailyLimit ? '/' + dailyLimit : ''} ед.</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="review-btn-group">
+          <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня</button>
+          <input type="date" id="review-date-pick" class="review-date-input" value="${dayStr(addDays(new Date(), -1))}" max="${todayStr()}" title="Выбрать дату" />
+        </div>
         ${ tasksSubView === 'tasks' ? '<button id="tasks-add-btn" class="btn-primary">+ Задача</button>' : '' }
         ${ tasksSubView === 'routines' ? '<button id="routine-add-btn" class="btn-primary">+ Рутина</button>' : '' }
         ${ tasksSubView === 'habits' ? '<button id="habit-add-btn" class="btn-primary">+ Привычка</button>' : '' }
@@ -1145,7 +1149,12 @@ function renderTasksSection() {
     <div id="tasks-content"></div>
   </section>`
 
-  document.querySelector('#tasks-review-btn')!.addEventListener('click', () => { tasksSubView = 'review'; renderTasksSection() })
+  document.querySelector('#tasks-review-btn')!.addEventListener('click', () => {
+    const pick = document.querySelector<HTMLInputElement>('#review-date-pick')?.value || dayStr(addDays(new Date(), -1))
+    reviewTargetDate = pick
+    tasksSubView = 'review'
+    renderTasksSection()
+  })
   document.querySelector('#tasks-tab-tasks')!.addEventListener('click', () => { tasksSubView = 'tasks'; renderTasksSection() })
   document.querySelector('#tasks-tab-routines')!.addEventListener('click', () => { tasksSubView = 'routines'; renderTasksSection() })
   document.querySelector('#tasks-tab-habits')!.addEventListener('click', () => { tasksSubView = 'habits'; renderTasksSection() })
@@ -1162,18 +1171,37 @@ function renderTasksSection() {
 
 // ─── Daily Review ──────────────────────────────────────────────────────────
 
+const RU_MONTHS: Record<string, string> = {
+  'янв': '01', 'фев': '02', 'мар': '03', 'апр': '04', 'май': '05', 'мая': '05',
+  'июн': '06', 'июл': '07', 'авг': '08', 'сен': '09', 'окт': '10', 'ноя': '11', 'дек': '12'
+}
+
 function extractReviewDate(text: string): string | null {
   const lower = text.toLowerCase()
-  const keywords = ['итог дня', 'итоги дня', 'подвести итог', 'подведем итог', 'подведём итог', 'подведи итог', 'разбор дня', 'итоги за', 'итоги сегодня', 'что я сделал', 'итог за', 'подводим итог', 'давай итог']
+  const keywords = ['итог дня', 'итоги дня', 'подвести итог', 'подведем итог', 'подведём итог', 'подведи итог', 'разбор дня', 'итоги за', 'итоги сегодня', 'что я сделал', 'итог за', 'подводим итог', 'давай итог', 'итог по', 'подведи итоги']
   if (!keywords.some((kw) => lower.includes(kw))) return null
+
   if (lower.includes('вчера')) return dayStr(addDays(new Date(), -1))
   if (lower.includes('сегодня')) return todayStr()
-  const m = text.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/)
-  if (m) {
-    const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : String(new Date().getFullYear())
-    return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`
+
+  // "22 апреля 2026" или "22 апреля"
+  const ruMatch = lower.match(/(\d{1,2})\s+(янв\w*|фев\w*|мар\w*|апр\w*|май\w*|мая|июн\w*|июл\w*|авг\w*|сен\w*|окт\w*|ноя\w*|дек\w*)(?:\s+(\d{4}))?/)
+  if (ruMatch) {
+    const day = ruMatch[1].padStart(2, '0')
+    const monthKey = Object.keys(RU_MONTHS).find((k) => ruMatch[2].startsWith(k))
+    const month = monthKey ? RU_MONTHS[monthKey] : null
+    const year = ruMatch[3] ?? String(new Date().getFullYear())
+    if (month) return `${year}-${month}-${day}`
   }
-  return dayStr(addDays(new Date(), -1)) // по умолчанию — вчера
+
+  // "22.04" или "22/04"
+  const numMatch = text.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/)
+  if (numMatch) {
+    const y = numMatch[3] ? (numMatch[3].length === 2 ? '20' + numMatch[3] : numMatch[3]) : String(new Date().getFullYear())
+    return `${y}-${numMatch[2].padStart(2,'0')}-${numMatch[1].padStart(2,'0')}`
+  }
+
+  return dayStr(addDays(new Date(), -1))
 }
 
 function renderDailyReviewWidget(reviewDate: string, confirmed: boolean, container: HTMLElement, msg: ChatMessage, conv: typeof state.conversations[0]) {
@@ -1181,7 +1209,6 @@ function renderDailyReviewWidget(reviewDate: string, confirmed: boolean, contain
   const dow = new Date(reviewDate + 'T12:00').getDay()
   const dayTasks = tasks.filter((t) => t.scheduledDate === reviewDate)
   const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
-  if (!dayTasks.length && !dayRoutines.length) return
 
   const widget = document.createElement('div')
   widget.className = `daily-review-widget${confirmed ? ' confirmed' : ''}`
@@ -1221,6 +1248,7 @@ function renderDailyReviewWidget(reviewDate: string, confirmed: boolean, contain
     <div class="drw-header">📊 Итог — ${dateLabel}</div>
     ${dayRoutines.length ? `<div class="drw-section">Рутины</div>${routineRows}` : ''}
     ${dayTasks.length ? `<div class="drw-section">Задачи</div>${taskRows}` : ''}
+    ${!dayRoutines.length && !dayTasks.length ? '<p class="hint" style="margin:8px 0">На этот день ничего не было запланировано.</p>' : ''}
     <div class="drw-footer">
       <button class="drw-confirm btn-primary">Подтвердить итог →</button>
     </div>`
@@ -1923,77 +1951,139 @@ function renderTaskForm(task?: ScheduledTask) {
 }
 
 function renderDailyReview() {
-  const yesterday = dayStr(addDays(new Date(), -1))
-  const yesterdayTasks = tasks.filter((t) => t.scheduledDate === yesterday)
+  const targetDate = reviewTargetDate || dayStr(addDays(new Date(), -1))
+  const dateLabel = new Date(targetDate + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
+  const dow = new Date(targetDate + 'T12:00').getDay()
+  const dayTasks = tasks.filter((t) => t.scheduledDate === targetDate)
+  const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
+  const nextDay = dayStr(addDays(new Date(targetDate + 'T12:00'), 1))
+  const hasAnything = dayTasks.length > 0 || dayRoutines.length > 0
 
   contentRoot.innerHTML = `<section class="documents">
     <div class="page-header-row">
       <div style="display:flex;align-items:center;gap:12px">
         <button id="review-back" class="btn-secondary">← Назад</button>
-        <div><h2 style="margin:0">Итог дня</h2><p class="page-subtitle" style="margin:0">${new Date(yesterday).toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}</p></div>
+        <div>
+          <h2 style="margin:0">Итог дня</h2>
+          <p class="page-subtitle" style="margin:0">${dateLabel}</p>
+        </div>
       </div>
+      <input type="date" id="review-date-nav" class="review-date-input" value="${targetDate}" max="${todayStr()}" />
     </div>
-    ${yesterdayTasks.length === 0 ? '<p class="hint">Вчера задач не было запланировано.</p>' : `
-    <div id="review-list" class="review-list"></div>
-    <div class="form-actions" style="margin-top:20px">
-      <button id="review-submit" class="btn-primary">Завершить итог →</button>
-    </div>`}
+    ${!hasAnything ? '<p class="hint">На этот день ничего не было запланировано.</p>' : `
+      ${dayRoutines.length ? `<div class="tasks-group-label">Рутины</div><div id="review-routines"></div>` : ''}
+      ${dayTasks.length ? `<div class="tasks-group-label">Задачи</div><div id="review-tasks"></div>` : ''}
+      <div class="form-actions" style="margin-top:20px">
+        <button id="review-submit" class="btn-primary">Подтвердить итог →</button>
+      </div>`}
   </section>`
 
   document.querySelector('#review-back')!.addEventListener('click', () => { tasksSubView = 'tasks'; renderTasksSection() })
-  if (!yesterdayTasks.length) return
+  document.querySelector<HTMLInputElement>('#review-date-nav')!.addEventListener('change', (e) => {
+    reviewTargetDate = (e.target as HTMLInputElement).value
+    renderDailyReview()
+  })
+  if (!hasAnything) return
 
-  const list = document.querySelector<HTMLDivElement>('#review-list')!
-  const decisions: Record<string, { action: 'done' | 'skip' | 'accumulate' | 'reschedule'; date?: string }> = {}
-  yesterdayTasks.forEach((t) => { decisions[t.id] = { action: t.done ? 'done' : 'reschedule' } })
+  type Decision = { action: 'done' | 'skip' | 'accumulate' | 'reschedule'; date?: string }
+  const taskDecisions: Record<string, Decision> = {}
+  const routineDecisions: Record<string, Decision> = {}
 
-  const renderReviewList = () => {
-    list.innerHTML = ''
-    yesterdayTasks.forEach((task) => {
-      const dec = decisions[task.id]
-      const row = document.createElement('div')
-      row.className = 'review-row'
-      row.innerHTML = `
-        <div class="review-row-title">
-          <label class="task-check-label"><input type="checkbox" class="rv-done-check" ${dec.action === 'done' ? 'checked' : ''} /></label>
-          <span>${escapeAttr(task.title)} <span class="task-weight">${task.weight} ед.</span></span>
-        </div>
-        <div class="review-row-actions ${dec.action === 'done' ? 'hidden' : ''}">
-          <button class="rv-btn ${dec.action === 'skip' ? 'rv-active' : ''}" data-action="skip">Пропустить</button>
-          <button class="rv-btn ${dec.action === 'accumulate' ? 'rv-active' : ''}" data-action="accumulate">Накопить</button>
-          <button class="rv-btn ${dec.action === 'reschedule' ? 'rv-active' : ''}" data-action="reschedule">Перенести</button>
-          ${dec.action === 'reschedule' ? `<input type="date" class="rv-date" value="${dec.date ?? ''}" placeholder="Когда?" />` : ''}
-        </div>`
-      row.querySelector<HTMLInputElement>('.rv-done-check')!.addEventListener('change', (e) => {
-        decisions[task.id] = { action: (e.target as HTMLInputElement).checked ? 'done' : 'reschedule' }
-        renderReviewList()
-      })
-      row.querySelectorAll<HTMLButtonElement>('.rv-btn[data-action]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          decisions[task.id] = { action: btn.dataset.action as 'done' | 'skip' | 'accumulate' | 'reschedule' }
-          renderReviewList()
+  dayTasks.forEach((t) => {
+    const log = routineLogs.find((l) => l.routineId === t.id && l.date === targetDate)
+    taskDecisions[t.id] = { action: t.done ? 'done' : (t.onMissed as 'done' | 'skip' | 'accumulate' | 'reschedule') || 'reschedule' }
+    void log
+  })
+  dayRoutines.forEach((r) => {
+    const log = routineLogs.find((l) => l.routineId === r.id && l.date === targetDate)
+    routineDecisions[r.id] = { action: log?.status === 'done' ? 'done' : (r.onMissed as Decision['action']) || 'skip' }
+  })
+
+  const buildRow = (id: string, title: string, weight: number, dec: Decision, onDecChange: (d: Decision) => void) => {
+    const row = document.createElement('div')
+    row.className = 'review-row'
+    const isDone = dec.action === 'done'
+    row.innerHTML = `
+      <div class="review-row-title">
+        <label class="task-check-label"><input type="checkbox" class="rv-done-check" ${isDone ? 'checked' : ''} /></label>
+        <span class="rv-title">${escapeAttr(title)}</span>
+        <span class="task-weight">${weight} ед.</span>
+      </div>
+      <div class="review-row-actions ${isDone ? 'hidden' : ''}">
+        ${(['skip','accumulate','reschedule'] as const).map((a) =>
+          `<button class="rv-btn ${dec.action === a ? 'rv-active' : ''}" data-action="${a}">${{skip:'Пропустить',accumulate:'Накопить',reschedule:'Перенести'}[a]}</button>`
+        ).join('')}
+        ${dec.action === 'reschedule' ? `
+          <input type="date" class="rv-date" value="${dec.date ?? nextDay}" />
+          <button class="rv-suggest-btn" type="button">💡</button>` : ''}
+      </div>`
+    row.querySelector<HTMLInputElement>('.rv-done-check')!.addEventListener('change', (e) => {
+      onDecChange({ action: (e.target as HTMLInputElement).checked ? 'done' : 'reschedule' })
+      renderRows()
+    })
+    row.querySelectorAll<HTMLButtonElement>('.rv-btn[data-action]').forEach((btn) => {
+      btn.addEventListener('click', () => { onDecChange({ action: btn.dataset.action as Decision['action'] }); renderRows() })
+    })
+    row.querySelector<HTMLInputElement>('.rv-date')?.addEventListener('change', (e) => {
+      dec.date = (e.target as HTMLInputElement).value
+    })
+    row.querySelector<HTMLButtonElement>('.rv-suggest-btn')?.addEventListener('click', () => {
+      const routine = routines.find((x) => x.id === id)
+      const suggestions = routine ? suggestRescheduleDates(routine, targetDate, 3) : [{ date: nextDay }, { date: dayStr(addDays(new Date(targetDate+'T12:00'), 2)) }]
+      const menu = document.createElement('div')
+      menu.className = 'routine-action-menu'
+      const btn = row.querySelector<HTMLButtonElement>('.rv-suggest-btn')!
+      const rect = btn.getBoundingClientRect()
+      menu.style.cssText = `position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;z-index:300`
+      menu.innerHTML = suggestions.map((s) => `<button class="rma-btn" data-date="${s.date}">${new Date(s.date+'T12:00').toLocaleDateString('ru',{weekday:'short',day:'numeric',month:'short'})}</button>`).join('')
+      document.body.appendChild(menu)
+      menu.querySelectorAll<HTMLButtonElement>('[data-date]').forEach((b) => {
+        b.addEventListener('click', () => {
+          onDecChange({ action: 'reschedule', date: b.dataset.date }); menu.remove(); renderRows()
         })
       })
-      row.querySelector<HTMLInputElement>('.rv-date')?.addEventListener('change', (e) => {
-        decisions[task.id].date = (e.target as HTMLInputElement).value
-      })
-      list.appendChild(row)
+      setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 50)
     })
+    return row
   }
-  renderReviewList()
+
+  const renderRows = () => {
+    const rList = document.querySelector<HTMLDivElement>('#review-routines')
+    const tList = document.querySelector<HTMLDivElement>('#review-tasks')
+    if (rList) {
+      rList.innerHTML = ''
+      dayRoutines.forEach((r) => rList.appendChild(buildRow(r.id, r.title, r.weight, routineDecisions[r.id], (d) => { routineDecisions[r.id] = d })))
+    }
+    if (tList) {
+      tList.innerHTML = ''
+      dayTasks.forEach((t) => tList.appendChild(buildRow(t.id, t.title, t.weight, taskDecisions[t.id], (d) => { taskDecisions[t.id] = d })))
+    }
+  }
+  renderRows()
 
   document.querySelector('#review-submit')!.addEventListener('click', async () => {
-    for (const task of yesterdayTasks) {
-      const dec = decisions[task.id]
+    // обработка задач
+    for (const task of dayTasks) {
+      const dec = taskDecisions[task.id]
+      if (dec.action === 'done') await updateTask(task.id, { done: true })
+      else if (dec.action === 'skip') await updateTask(task.id, { skipped: true })
+      else if (dec.action === 'accumulate') await updateTask(task.id, { scheduledDate: nextDay, accumulation: task.accumulation + task.weight, skipped: false })
+      else if (dec.action === 'reschedule') await updateTask(task.id, { scheduledDate: dec.date || nextDay, done: false, skipped: false })
+    }
+    // обработка рутин
+    for (const r of dayRoutines) {
+      const dec = routineDecisions[r.id]
+      const existLog = routineLogs.find((l) => l.routineId === r.id && l.date === targetDate)
       if (dec.action === 'done') {
-        await updateTask(task.id, { done: true })
+        if (!existLog) await logRoutine(r.id, targetDate, 'done')
       } else if (dec.action === 'skip') {
-        await updateTask(task.id, { skipped: true })
-      } else if (dec.action === 'accumulate') {
-        const nextAcc = task.accumulation + task.weight
-        await updateTask(task.id, { scheduledDate: todayStr(), accumulation: nextAcc, skipped: false })
+        if (!existLog) await logRoutine(r.id, targetDate, 'skipped')
       } else if (dec.action === 'reschedule') {
-        await updateTask(task.id, { scheduledDate: dec.date || todayStr(), skipped: false })
+        if (!existLog) await logRoutine(r.id, targetDate, 'skipped')
+        await createTask({ title: r.title + ' ↷', weight: r.weight, context: r.context, conditions: '', scheduledDate: dec.date || nextDay, scheduledTime: r.times?.[String(dow)] ?? r.time, onMissed: 'skip', accumulation: 0, done: false, skipped: false, notes: `Перенос с ${targetDate}` })
+      } else if (dec.action === 'accumulate') {
+        if (!existLog) await logRoutine(r.id, targetDate, 'skipped')
+        await createTask({ title: r.title + ' ↷', weight: r.weight * 2, context: r.context, conditions: '', scheduledDate: nextDay, onMissed: 'skip', accumulation: r.weight, done: false, skipped: false, notes: `Накопление с ${targetDate}` })
       }
     }
     await refreshData()
