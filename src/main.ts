@@ -1131,7 +1131,7 @@ function renderTasksSection() {
     <div class="page-header-row">
       <div><h2>Планирование</h2><p class="page-subtitle">Сегодня: ${totalUnits}${dailyLimit ? '/' + dailyLimit : ''} ед.</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня ▾</button>
+        <button id="tasks-review-btn" class="btn-secondary">📊 Итог дня</button>
         ${ tasksSubView === 'tasks' ? '<button id="tasks-add-btn" class="btn-primary">+ Задача</button>' : '' }
         ${ tasksSubView === 'routines' ? '<button id="routine-add-btn" class="btn-primary">+ Рутина</button>' : '' }
         ${ tasksSubView === 'habits' ? '<button id="habit-add-btn" class="btn-primary">+ Привычка</button>' : '' }
@@ -1146,8 +1146,10 @@ function renderTasksSection() {
     <div id="tasks-content"></div>
   </section>`
 
-  document.querySelector('#tasks-review-btn')!.addEventListener('click', (e) => {
-    showReviewDatePicker(e.currentTarget as HTMLElement)
+  document.querySelector('#tasks-review-btn')!.addEventListener('click', () => {
+    if (!reviewTargetDate) reviewTargetDate = dayStr(addDays(new Date(), -1))
+    tasksSubView = 'review'
+    renderTasksSection()
   })
   document.querySelector('#tasks-tab-tasks')!.addEventListener('click', () => { tasksSubView = 'tasks'; renderTasksSection() })
   document.querySelector('#tasks-tab-routines')!.addEventListener('click', () => { tasksSubView = 'routines'; renderTasksSection() })
@@ -1368,42 +1370,6 @@ async function showPostReviewSchedule(reviewDate: string, conv: typeof state.con
 }
 
 // ─── End Daily Review ───────────────────────────────────────────────────────
-
-function showReviewDatePicker(anchor: HTMLElement) {
-  document.querySelector('.review-date-popup')?.remove()
-  const yesterday = dayStr(addDays(new Date(), -1))
-  const popup = document.createElement('div')
-  popup.className = 'review-date-popup'
-  const rect = anchor.getBoundingClientRect()
-  popup.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;z-index:200`
-  popup.innerHTML = `
-    <div class="rdp-title">За какой день?</div>
-    <button class="rdp-btn" data-date="${yesterday}">Вчера (${new Date(yesterday + 'T12:00').toLocaleDateString('ru', { day: 'numeric', month: 'short' })})</button>
-    <button class="rdp-btn" data-date="${todayStr()}">Сегодня</button>
-    <div class="rdp-custom">
-      <input type="date" class="rdp-date-input" value="${reviewTargetDate || yesterday}" max="${todayStr()}" />
-      <button class="rdp-ok btn-primary">Открыть</button>
-    </div>`
-  document.body.appendChild(popup)
-
-  const open = (date: string) => {
-    reviewTargetDate = date
-    tasksSubView = 'review'
-    popup.remove()
-    renderTasksSection()
-  }
-
-  popup.querySelectorAll<HTMLButtonElement>('.rdp-btn[data-date]').forEach((btn) => {
-    btn.addEventListener('click', () => open(btn.dataset.date!))
-  })
-  popup.querySelector('.rdp-ok')!.addEventListener('click', () => {
-    const val = popup.querySelector<HTMLInputElement>('.rdp-date-input')!.value
-    if (val) open(val)
-  })
-  setTimeout(() => document.addEventListener('click', (e) => {
-    if (!popup.contains(e.target as Node)) popup.remove()
-  }, { once: true }), 50)
-}
 
 function calcDayLoad(date: string): number {
   const dow = new Date(date).getDay()
@@ -1998,7 +1964,10 @@ function renderDailyReview() {
           <p class="page-subtitle" style="margin:0">${dateLabel}</p>
         </div>
       </div>
-      <input type="date" id="review-date-nav" class="review-date-input" value="${targetDate}" max="${todayStr()}" />
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;color:var(--muted)">Дата:</span>
+        <input type="date" id="review-date-nav" class="review-date-input" value="${targetDate}" max="${todayStr()}" style="padding:6px 10px;border:1px solid var(--accent);border-radius:6px;font-size:14px;color:var(--accent);font-weight:600;background:var(--accent-soft);cursor:pointer" />
+      </div>
     </div>
     ${!hasAnything ? '<p class="hint">На этот день ничего не было запланировано.</p>' : `
       ${dayRoutines.length ? `<div class="tasks-group-label">Рутины</div><div id="review-routines"></div>` : ''}
