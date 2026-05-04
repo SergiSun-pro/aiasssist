@@ -137,6 +137,35 @@ export interface Instruction {
   updatedAt: number
 }
 
+export interface Agent {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string
+  icon: string
+  color: string
+  model?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface AgentMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: number
+  model?: string
+}
+
+export interface AgentTask {
+  id: string
+  agentId: string
+  title: string
+  messages: AgentMessage[]
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AppNotification {
   id: string
   text: string

@@ -75,7 +75,7 @@ async function ensureDb() {
   try {
     await fs.access(DB_PATH)
   } catch {
-    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [], tasks: [], routines: [], routineLogs: [], habits: [], habitLogs: [] }, null, 2), 'utf8')
+    await fs.writeFile(DB_PATH, JSON.stringify({ documents: [], todos: [], instructions: [], tasks: [], routines: [], routineLogs: [], habits: [], habitLogs: [], agents: [], agentTasks: [] }, null, 2), 'utf8')
   }
 }
 
@@ -87,6 +87,8 @@ async function readDb() {
     documents: Array.isArray(parsed.documents) ? parsed.documents : [],
     todos: Array.isArray(parsed.todos) ? parsed.todos : [],
     instructions: Array.isArray(parsed.instructions) ? parsed.instructions : [],
+    agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+    agentTasks: Array.isArray(parsed.agentTasks) ? parsed.agentTasks : [],
     tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
     routines: Array.isArray(parsed.routines) ? parsed.routines : [],
     routineLogs: Array.isArray(parsed.routineLogs) ? parsed.routineLogs : [],
@@ -577,6 +579,53 @@ app.delete('/api/instructions/:id', async (req, res) => {
   db.instructions.splice(index, 1)
   await writeDb(db)
   res.json({ ok: true })
+})
+
+// === AGENTS ===
+
+app.get('/api/agents', async (_req, res) => {
+  const db = await readDb(); res.json({ agents: db.agents })
+})
+app.post('/api/agents', async (req, res) => {
+  const { name, description, systemPrompt, icon, color, model } = req.body ?? {}
+  if (!name) { res.status(400).json({ error: 'name обязателен' }); return }
+  const db = await readDb()
+  const agent = { id: createId(), name: String(name), description: String(description ?? ''), systemPrompt: String(systemPrompt ?? ''), icon: String(icon ?? '🤖'), color: String(color ?? '#4f46e5'), model: model ?? undefined, createdAt: Date.now(), updatedAt: Date.now() }
+  db.agents.push(agent); await writeDb(db); res.json({ agent })
+})
+app.patch('/api/agents/:id', async (req, res) => {
+  const db = await readDb(); const a = db.agents.find(x => x.id === req.params.id)
+  if (!a) { res.status(404).json({ error: 'Агент не найден' }); return }
+  for (const f of ['name','description','systemPrompt','icon','color','model']) if (req.body[f] !== undefined) a[f] = req.body[f]
+  a.updatedAt = Date.now(); await writeDb(db); res.json({ agent: a })
+})
+app.delete('/api/agents/:id', async (req, res) => {
+  const db = await readDb()
+  db.agents = db.agents.filter(a => a.id !== req.params.id)
+  db.agentTasks = db.agentTasks.filter(t => t.agentId !== req.params.id)
+  await writeDb(db); res.json({ ok: true })
+})
+
+app.get('/api/agents/:agentId/tasks', async (req, res) => {
+  const db = await readDb()
+  res.json({ tasks: db.agentTasks.filter(t => t.agentId === req.params.agentId) })
+})
+app.post('/api/agents/:agentId/tasks', async (req, res) => {
+  const db = await readDb()
+  const task = { id: createId(), agentId: req.params.agentId, title: String(req.body?.title || 'Новая задача'), messages: [], createdAt: Date.now(), updatedAt: Date.now() }
+  db.agentTasks.unshift(task); await writeDb(db); res.json({ task })
+})
+app.patch('/api/agents/:agentId/tasks/:taskId', async (req, res) => {
+  const db = await readDb(); const t = db.agentTasks.find(x => x.id === req.params.taskId && x.agentId === req.params.agentId)
+  if (!t) { res.status(404).json({ error: 'Задача не найдена' }); return }
+  if (req.body.title !== undefined) t.title = String(req.body.title)
+  if (req.body.messages !== undefined) t.messages = req.body.messages
+  t.updatedAt = Date.now(); await writeDb(db); res.json({ task: t })
+})
+app.delete('/api/agents/:agentId/tasks/:taskId', async (req, res) => {
+  const db = await readDb()
+  db.agentTasks = db.agentTasks.filter(t => !(t.id === req.params.taskId && t.agentId === req.params.agentId))
+  await writeDb(db); res.json({ ok: true })
 })
 
 ensureDefaultAdmin().then(() => {

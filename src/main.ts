@@ -1,9 +1,10 @@
 import './style.css'
 import { filesToImageDataUrls, readAsDataUrl } from './pdfUtils'
-import { clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
+import { authFetch, clearToken, createUser, deleteUser, fetchUsers, getCurrentUser, login } from './auth'
 import type { AuthUser } from './auth'
 import { createDocument, deleteDocument, extractDocument, listDocuments, listTodos, runReminders, setTodoDone, updateDocument } from './documentsApi'
 import { createInstruction, deleteInstruction, listInstructions, updateInstruction } from './instructionsApi'
+import { createAgent, createAgentTask, deleteAgent, deleteAgentTask, listAgentTasks, listAgents, updateAgent, updateAgentTask } from './agentsApi'
 import { createTask, deleteTask, listTasks, updateTask } from './tasksApi'
 import { createRoutine, deleteRoutine, deleteRoutineLog, listRoutineLogs, listRoutines, logRoutine, updateRoutine } from './routinesApi'
 import { createHabit, deleteHabit, listHabitLogs, listHabits, logHabit, updateHabit } from './habitsApi'
@@ -11,7 +12,7 @@ import { getSettings, saveSettings } from './settingsApi'
 import type { UserSettings } from './settingsApi'
 import { requestOpenRouterCompletion } from './openrouter'
 import { LocalConversationsRepository } from './storage'
-import type { AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Habit, HabitLog, Instruction, InstructionStep, OnMissed, Routine, RoutineLog, ScheduledTask, TodoItem } from './types'
+import type { Agent, AgentMessage, AgentTask, AppNotification, AppState, ChatMessage, Conversation, DocumentRecord, Habit, HabitLog, Instruction, InstructionStep, OnMissed, Routine, RoutineLog, ScheduledTask, TodoItem } from './types'
 
 const DEFAULT_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001', 'deepseek/deepseek-chat-v3-0324']
 const VISION_MODELS = ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']
@@ -30,6 +31,11 @@ let todos: TodoItem[] = []
 let instructions: Instruction[] = []
 let instructionSubView: 'list' | 'add' | 'edit' | 'view' = 'list'
 let activeInstruction: Instruction | null = null
+let agents: Agent[] = []
+let agentSubView: 'list' | 'agent' | 'task' | 'agent-form' = 'list'
+let activeAgent: Agent | null = null
+let activeAgentTasks: AgentTask[] = []
+let activeAgentTask: AgentTask | null = null
 let tasks: ScheduledTask[] = []
 let routines: Routine[] = []
 let routineLogs: RoutineLog[] = []
@@ -44,7 +50,7 @@ let reviewTargetDate = ''
 
 const DAYS_SHORT = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб']
 const PRESET_COLORS = ['#4f46e5','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#f97316']
-let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks' = 'chat'
+let activeTab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks' | 'agents' = 'chat'
 let docImageDataUrl: string | undefined
 let docExtractImages: string[] = []
 let docTags: string[] = []
@@ -124,6 +130,7 @@ function initApp() {
       <button id="tab-base" class="nav-tab" data-label="База"><span class="nav-icon">📚</span><span class="nav-label">База</span></button>
       <button id="tab-todos" class="nav-tab" data-label="Дела"><span class="nav-icon">✓</span><span class="nav-label">Дела</span></button>
       <button id="tab-tasks" class="nav-tab" data-label="Задачи"><span class="nav-icon">📅</span><span class="nav-label">Задачи</span></button>
+      <button id="tab-agents" class="nav-tab" data-label="Агенты"><span class="nav-icon">🤖</span><span class="nav-label">Агенты</span></button>
       <button id="tab-instructions" class="nav-tab" data-label="Инструкции"><span class="nav-icon">📋</span><span class="nav-label">Инструкции</span></button>
       <button id="tab-notifications" class="nav-tab tab-notify" data-label="Уведомления"><span class="nav-icon">🔔</span><span class="nav-label">Уведомления</span><span id="notify-badge" class="notify-badge hidden"></span></button>
       ${isAdmin ? '<button id="tab-users" class="nav-tab" data-label="Пользователи"><span class="nav-icon">👥</span><span class="nav-label">Пользователи</span></button>' : ''}
@@ -157,6 +164,7 @@ function initApp() {
   document.querySelector<HTMLButtonElement>('#tab-base')!.addEventListener('click', () => setTab('base'))
   document.querySelector<HTMLButtonElement>('#tab-todos')!.addEventListener('click', () => setTab('todos'))
   document.querySelector<HTMLButtonElement>('#tab-tasks')!.addEventListener('click', () => setTab('tasks'))
+  document.querySelector<HTMLButtonElement>('#tab-agents')!.addEventListener('click', () => setTab('agents'))
   document.querySelector<HTMLButtonElement>('#tab-instructions')!.addEventListener('click', () => setTab('instructions'))
   document.querySelector<HTMLButtonElement>('#tab-notifications')!.addEventListener('click', () => setTab('notifications'))
   document.querySelector<HTMLButtonElement>('#settings-btn')!.addEventListener('click', showSettingsModal)
@@ -180,10 +188,10 @@ function applyTabLayout() {
 
 checkAuthAndInit()
 
-function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks') {
+function setTab(tab: 'chat' | 'documents' | 'todos' | 'base' | 'notifications' | 'users' | 'instructions' | 'tasks' | 'agents') {
   activeTab = tab
   document.querySelectorAll('.nav-tab').forEach((el) => el.classList.remove('active'))
-  const tabId = tab === 'documents' ? 'docs' : tab === 'notifications' ? 'notifications' : tab
+  const tabId = tab === 'documents' ? 'docs' : tab
   document.querySelector(`#tab-${tabId}`)?.classList.add('active')
   if (tab === 'notifications') {
     updateNotificationBadge()
@@ -200,6 +208,7 @@ function render() {
   if (activeTab === 'todos') renderTodos()
   if (activeTab === 'notifications') renderNotifications()
   if (activeTab === 'tasks') renderTasksSection()
+  if (activeTab === 'agents') renderAgentsSection()
   if (activeTab === 'instructions') renderInstructions()
   if (activeTab === 'users') renderUsers()
 }
@@ -2092,6 +2101,319 @@ function renderDailyReview() {
 }
 
 // ===================== END TASKS =====================
+
+// ===================== AGENTS =====================
+
+async function renderAgentsSection() {
+  if (agentSubView === 'agent-form') { renderAgentForm(activeAgent ?? undefined); return }
+  if (agentSubView === 'agent' && activeAgent) { await renderAgentDetail(activeAgent); return }
+  if (agentSubView === 'task' && activeAgent && activeAgentTask) { renderAgentTaskChat(activeAgent, activeAgentTask); return }
+
+  // список агентов
+  try { agents = await listAgents() } catch { agents = [] }
+
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div><h2>Агенты</h2><p class="page-subtitle">Специализированные ИИ-ассистенты · ${agents.length}</p></div>
+      <button id="agent-add-btn" class="btn-primary">+ Создать агента</button>
+    </div>
+    <div id="agents-grid" class="agents-grid"></div>
+  </section>`
+
+  document.querySelector('#agent-add-btn')!.addEventListener('click', () => {
+    activeAgent = null; agentSubView = 'agent-form'; renderAgentsSection()
+  })
+
+  const grid = document.querySelector<HTMLDivElement>('#agents-grid')!
+  if (!agents.length) { grid.innerHTML = '<p class="hint">Агентов пока нет. Создай первого!</p>'; return }
+
+  for (const agent of agents) {
+    const card = document.createElement('div')
+    card.className = 'agent-card'
+    card.style.borderTopColor = agent.color
+    card.innerHTML = `
+      <div class="agent-card-icon" style="background:${agent.color}20;color:${agent.color}">${agent.icon}</div>
+      <div class="agent-card-body">
+        <div class="agent-card-name">${escapeAttr(agent.name)}</div>
+        <div class="agent-card-desc">${escapeAttr(agent.description || 'Нет описания')}</div>
+        ${agent.model ? `<div class="agent-card-model">${escapeAttr(agent.model)}</div>` : ''}
+      </div>
+      <div class="agent-card-actions">
+        <button class="agent-open-btn btn-primary">Открыть →</button>
+        <button class="agent-edit-btn conv-action-btn" title="Настройки">⚙</button>
+        <button class="agent-del-btn conv-action-btn conv-delete-btn" title="Удалить">✕</button>
+      </div>`
+    card.querySelector('.agent-open-btn')!.addEventListener('click', async () => {
+      activeAgent = agent; agentSubView = 'agent'; await renderAgentsSection()
+    })
+    card.querySelector('.agent-edit-btn')!.addEventListener('click', () => {
+      activeAgent = agent; agentSubView = 'agent-form'; renderAgentsSection()
+    })
+    card.querySelector('.agent-del-btn')!.addEventListener('click', async () => {
+      if (!confirm(`Удалить агента «${agent.name}» и все его задачи?`)) return
+      await deleteAgent(agent.id); agentSubView = 'list'; renderAgentsSection()
+    })
+    grid.appendChild(card)
+  }
+}
+
+async function renderAgentDetail(agent: Agent) {
+  try { activeAgentTasks = await listAgentTasks(agent.id) } catch { activeAgentTasks = [] }
+
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:14px">
+        <button id="agent-back" class="btn-secondary">← Назад</button>
+        <div class="agent-detail-header">
+          <span class="agent-detail-icon" style="background:${agent.color}20;color:${agent.color}">${agent.icon}</span>
+          <div>
+            <h2 style="margin:0">${escapeAttr(agent.name)}</h2>
+            ${agent.description ? `<p class="page-subtitle" style="margin:0">${escapeAttr(agent.description)}</p>` : ''}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="agent-settings-btn" class="btn-secondary">⚙ Настройки</button>
+        <button id="agent-new-task-btn" class="btn-primary">+ Новая задача</button>
+      </div>
+    </div>
+    <div id="agent-tasks-list" class="agent-tasks-list"></div>
+  </section>`
+
+  document.querySelector('#agent-back')!.addEventListener('click', () => { agentSubView = 'list'; renderAgentsSection() })
+  document.querySelector('#agent-settings-btn')!.addEventListener('click', () => { agentSubView = 'agent-form'; renderAgentsSection() })
+  document.querySelector('#agent-new-task-btn')!.addEventListener('click', async () => {
+    const title = prompt('Название задачи:', 'Новая задача')
+    if (!title) return
+    const task = await createAgentTask(agent.id, title)
+    activeAgentTask = task; agentSubView = 'task'; renderAgentsSection()
+  })
+
+  const list = document.querySelector<HTMLDivElement>('#agent-tasks-list')!
+  if (!activeAgentTasks.length) { list.innerHTML = '<p class="hint">Задач пока нет. Создай первую!</p>'; return }
+
+  for (const task of activeAgentTasks) {
+    const row = document.createElement('div')
+    row.className = 'agent-task-row'
+    const lastMsg = task.messages[task.messages.length - 1]
+    const preview = lastMsg ? escapeAttr(lastMsg.content.slice(0, 80)) + (lastMsg.content.length > 80 ? '…' : '') : 'Нет сообщений'
+    row.innerHTML = `
+      <div class="agent-task-info" style="cursor:pointer">
+        <div class="agent-task-title">${escapeAttr(task.title)}</div>
+        <div class="agent-task-preview">${preview}</div>
+        <div class="agent-task-meta">${task.messages.length} сообщ. · ${new Date(task.updatedAt).toLocaleDateString('ru', { day: 'numeric', month: 'short' })}</div>
+      </div>
+      <div class="agent-task-btns">
+        <button class="atr-rename conv-action-btn" title="Переименовать">✏</button>
+        <button class="atr-del conv-action-btn conv-delete-btn" title="Удалить">✕</button>
+      </div>`
+    row.querySelector('.agent-task-info')!.addEventListener('click', () => {
+      activeAgentTask = task; agentSubView = 'task'; renderAgentsSection()
+    })
+    row.querySelector('.atr-rename')!.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      const newTitle = prompt('Название:', task.title)
+      if (newTitle?.trim()) { await updateAgentTask(agent.id, task.id, { title: newTitle.trim() }); await renderAgentDetail(agent) }
+    })
+    row.querySelector('.atr-del')!.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      if (!confirm(`Удалить задачу «${task.title}»?`)) return
+      await deleteAgentTask(agent.id, task.id); await renderAgentDetail(agent)
+    })
+    list.appendChild(row)
+  }
+}
+
+function renderAgentTaskChat(agent: Agent, task: AgentTask) {
+  const model = agent.model || selectedModel
+  const modelOpts = DEFAULT_MODELS.map((m) => `<option value="${m}" ${model === m ? 'selected' : ''}>${MODEL_LABELS[m] ?? m}</option>`).join('')
+
+  contentRoot.innerHTML = `<div class="chat-wrap">
+    <div class="agent-task-chat-header">
+      <button id="atc-back" class="btn-secondary">← ${escapeAttr(agent.name)}</button>
+      <div class="atc-title">
+        <span class="agent-detail-icon" style="background:${agent.color}20;color:${agent.color};font-size:16px;width:28px;height:28px">${agent.icon}</span>
+        <span id="atc-task-title" style="font-weight:600;font-size:15px">${escapeAttr(task.title)}</span>
+      </div>
+      <button id="atc-clear" class="btn-secondary" title="Очистить историю" style="font-size:12px;padding:4px 10px">🗑 Очистить</button>
+    </div>
+    <div id="agent-messages" class="messages"></div>
+    <div class="composer-area">
+      <form id="agent-composer" class="composer">
+        <div class="composer-shell">
+          <textarea id="agent-prompt" placeholder="Напишите сообщение... (Enter — отправить)" rows="1"></textarea>
+          <button type="submit" class="send-icon" title="Отправить">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="composer-footer">
+          <label class="model-label">
+            <span class="model-label-text">Модель</span>
+            <select id="agent-model-select" class="model-select">${modelOpts}</select>
+          </label>
+        </div>
+      </form>
+    </div>
+  </div>`
+
+  document.querySelector('#atc-back')!.addEventListener('click', async () => {
+    agentSubView = 'agent'; await renderAgentsSection()
+  })
+  document.querySelector('#atc-clear')!.addEventListener('click', async () => {
+    if (!confirm('Очистить историю этой задачи?')) return
+    activeAgentTask = { ...task, messages: [] }
+    await updateAgentTask(agent.id, task.id, { messages: [] })
+    renderAgentTaskChat(agent, activeAgentTask)
+  })
+
+  const messagesEl = document.querySelector<HTMLDivElement>('#agent-messages')!
+  const renderMessages = () => {
+    messagesEl.innerHTML = ''
+    if (!task.messages.length) {
+      messagesEl.innerHTML = '<p class="hint">Начните разговор с агентом.</p>'
+      return
+    }
+    for (const m of task.messages) {
+      const item = document.createElement('article')
+      item.className = `message ${m.role}`
+      item.innerHTML = `<div class="message-meta">${m.role === 'user' ? 'Ты' : `${escapeAttr(agent.name)}${m.model ? ` (${m.model})` : ''}`}</div><pre class="message-content"></pre>`
+      item.querySelector('pre')!.textContent = m.content
+      messagesEl.appendChild(item)
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+  renderMessages()
+
+  const textarea = document.querySelector<HTMLTextAreaElement>('#agent-prompt')!
+  textarea.addEventListener('input', () => { textarea.style.height = 'auto'; textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px' })
+  textarea.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); (document.querySelector('#agent-composer') as HTMLFormElement).requestSubmit() } })
+
+  document.querySelector<HTMLFormElement>('#agent-composer')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const text = textarea.value.trim()
+    if (!text) return
+    const chosenModel = document.querySelector<HTMLSelectElement>('#agent-model-select')!.value || model
+
+    const userMsg: AgentMessage = { id: createId(), role: 'user', content: text, createdAt: Date.now() }
+    task.messages.push(userMsg)
+    textarea.value = ''
+    textarea.style.height = 'auto'
+    renderMessages()
+
+    // автоназвание
+    if (task.messages.length === 1) {
+      task.title = text.slice(0, 50)
+      await updateAgentTask(agent.id, task.id, { title: task.title, messages: task.messages })
+      const titleEl = document.querySelector<HTMLSpanElement>('#atc-task-title')
+      if (titleEl) titleEl.textContent = task.title
+    }
+
+    try {
+      const payload = task.messages.map((m) => ({ role: m.role, content: m.content }))
+      const response = await authFetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: chosenModel,
+          messages: agent.systemPrompt
+            ? [{ role: 'system', content: agent.systemPrompt }, ...payload]
+            : payload
+        })
+      })
+      const data = await response.json() as { reply?: string; error?: string }
+      if (!response.ok) throw new Error(data.error ?? 'Ошибка')
+      const reply = data.reply?.trim() ?? ''
+      const aiMsg: AgentMessage = { id: createId(), role: 'assistant', content: reply, createdAt: Date.now(), model: chosenModel }
+      task.messages.push(aiMsg)
+      await updateAgentTask(agent.id, task.id, { messages: task.messages })
+      renderMessages()
+    } catch (err) {
+      const errMsg: AgentMessage = { id: createId(), role: 'assistant', content: `Ошибка: ${err instanceof Error ? err.message : 'unknown'}`, createdAt: Date.now() }
+      task.messages.push(errMsg)
+      renderMessages()
+    }
+  }
+}
+
+function renderAgentForm(agent?: Agent) {
+  const isEdit = !!agent?.id
+  contentRoot.innerHTML = `<section class="documents">
+    <div class="page-header-row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button id="af-back" class="btn-secondary">← Назад</button>
+        <h2 style="margin:0">${isEdit ? 'Настройки агента' : 'Новый агент'}</h2>
+      </div>
+    </div>
+    <form id="agent-form" class="doc-form">
+      <div class="form-row">
+        <div class="form-section" style="flex:0 0 90px">
+          <label class="form-label">Иконка</label>
+          <input id="af-icon" value="${agent?.icon ?? '🤖'}" style="text-align:center;font-size:28px;width:64px;padding:8px" maxlength="2" />
+        </div>
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Имя агента</label>
+          <input id="af-name" placeholder="Например: SEO-специалист" value="${escapeAttr(agent?.name ?? '')}" required />
+        </div>
+      </div>
+      <div class="form-section">
+        <label class="form-label">Описание</label>
+        <input id="af-desc" placeholder="Коротко о том, что делает агент" value="${escapeAttr(agent?.description ?? '')}" />
+      </div>
+      <div class="form-section">
+        <label class="form-label">Системный промпт (инструкции)</label>
+        <p class="page-subtitle" style="margin:0 0 8px">Это основа агента — что он умеет, как думает, какие правила соблюдает. Чем точнее, тем лучше.</p>
+        <textarea id="af-prompt" rows="8" placeholder="Ты — опытный SEO-специалист. Твоя задача — анализировать тексты и давать конкретные рекомендации по оптимизации...">${escapeAttr(agent?.systemPrompt ?? '')}</textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-section" style="flex:1">
+          <label class="form-label">Модель по умолчанию</label>
+          <select id="af-model">
+            <option value="">Текущая (из настроек)</option>
+            ${DEFAULT_MODELS.map((m) => `<option value="${m}" ${agent?.model === m ? 'selected' : ''}>${MODEL_LABELS[m] ?? m}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-section" style="flex:0 0 200px">
+          <label class="form-label">Цвет</label>
+          <div class="color-picker">${PRESET_COLORS.map((c) => `<button type="button" class="color-dot ${(agent?.color ?? PRESET_COLORS[0]) === c ? 'selected' : ''}" style="background:${c}" data-color="${c}"></button>`).join('')}</div>
+          <input type="hidden" id="af-color" value="${agent?.color ?? PRESET_COLORS[0]}" />
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">${isEdit ? 'Сохранить' : 'Создать агента'}</button>
+        <button type="button" id="af-cancel" class="btn-secondary">Отмена</button>
+      </div>
+      <p id="af-error" class="login-error hidden"></p>
+    </form>
+  </section>`
+
+  const goBack = () => { agentSubView = isEdit ? 'agent' : 'list'; renderAgentsSection() }
+  document.querySelector('#af-back')!.addEventListener('click', goBack)
+  document.querySelector('#af-cancel')!.addEventListener('click', goBack)
+
+  document.querySelectorAll<HTMLButtonElement>('.color-dot').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.color-dot').forEach((b) => b.classList.remove('selected'))
+      btn.classList.add('selected')
+      ;(document.querySelector('#af-color') as HTMLInputElement).value = btn.dataset.color!
+    })
+  })
+
+  document.querySelector<HTMLFormElement>('#agent-form')!.onsubmit = async (e) => {
+    e.preventDefault()
+    const v = (id: string) => (document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id)!).value.trim()
+    const errEl = document.querySelector<HTMLParagraphElement>('#af-error')!
+    try {
+      const payload = { name: v('#af-name'), description: v('#af-desc'), systemPrompt: v('#af-prompt'), icon: v('#af-icon') || '🤖', color: v('#af-color') || PRESET_COLORS[0], model: v('#af-model') || undefined }
+      if (isEdit && agent?.id) { activeAgent = await updateAgent(agent.id, payload) }
+      else { activeAgent = await createAgent(payload); agentSubView = 'agent' }
+      renderAgentsSection()
+    } catch (err) {
+      errEl.textContent = err instanceof Error ? err.message : 'Ошибка'; errEl.classList.remove('hidden')
+    }
+  }
+}
+
+// ===================== END AGENTS =====================
 
 // ===================== INSTRUCTIONS =====================
 

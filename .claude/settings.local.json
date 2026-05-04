@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep -n \"<\\\\\\\\\\\\\\\\\" src/main.ts)"
     ]
   }
 }
