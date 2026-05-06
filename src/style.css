@@ -1080,6 +1080,64 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .cal-add-btn { background: none; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); font-size: 16px; cursor: pointer; width: 100%; padding: 2px; margin-top: auto; }
 .cal-add-btn:hover { border-color: var(--accent); color: var(--accent); }
 
+.cal-chip-time { font-weight: 600; color: inherit; opacity: 0.85; margin-left: 4px; }
+
+/* Mobile calendar */
+.calendar-mobile { display: flex; flex-direction: column; gap: 6px; }
+
+.cal-mobile-day {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  overflow: hidden;
+}
+.cal-mobile-day.today { border-color: var(--accent); }
+.cal-mobile-day.empty { opacity: 0.6; }
+
+.cal-mobile-day-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel-2);
+}
+.cal-mobile-day.today .cal-mobile-day-header { background: var(--accent-soft); }
+
+.cal-mobile-date { display: flex; align-items: center; gap: 6px; flex: 1; }
+.cal-mobile-dow { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); min-width: 28px; }
+.cal-mobile-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.cal-mobile-num.today { background: var(--accent); color: #fff; }
+.cal-mobile-month { font-size: 12px; color: var(--muted); }
+
+.cal-mobile-units { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.cal-mobile-units.over-limit { color: #ef4444; font-weight: 700; }
+.cal-mobile-add { background: none; border: 1px solid var(--line); border-radius: 50%; width: 28px; height: 28px; font-size: 16px; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.cal-mobile-add:hover { border-color: var(--accent); color: var(--accent); }
+
+.cal-mobile-items { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+.cal-mobile-items .cal-routine-chip,
+.cal-mobile-items .cal-task-chip {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 /* Task proposal in chat */
 .task-proposal-card {
   background: var(--panel);

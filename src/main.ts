@@ -1838,47 +1838,73 @@ function renderHabitForm(habit?: Habit) {
 
 function renderCalendarView() {
   const container = document.querySelector<HTMLDivElement>('#tasks-content')!
+  const isMobile = window.innerWidth < 700
   const weekStart = addDays(new Date(), calendarWeekOffset * 7 - new Date().getDay() + 1)
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   const dailyLimit = parseFloat(userSettings.todoRules?.dailyUnits ?? '') || 0
 
   const nav = `<div class="calendar-nav">
-    <button id="cal-prev" class="btn-secondary">← Предыдущая</button>
-    <span class="calendar-week-label">${weekStart.toLocaleDateString('ru', { day: 'numeric', month: 'long' })} – ${days[6].toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-    <button id="cal-next" class="btn-secondary">Следующая →</button>
+    <button id="cal-prev" class="btn-secondary">←</button>
+    <span class="calendar-week-label">${weekStart.toLocaleDateString('ru', { day: 'numeric', month: 'short' })} – ${days[6].toLocaleDateString('ru', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+    <button id="cal-next" class="btn-secondary">→</button>
     ${calendarWeekOffset !== 0 ? '<button id="cal-today" class="btn-secondary">Сегодня</button>' : ''}
   </div>`
 
-  const grid = `<div class="calendar-grid">${days.map((day) => {
+  const buildDayItems = (day: Date) => {
     const ds = dayStr(day)
     const dow = day.getDay()
     const dayRoutines = routines.filter((r) => r.daysOfWeek.includes(dow))
     const dayTasks = tasks.filter((t) => !t.done && !t.skipped && t.scheduledDate === ds)
-    const routineUnits = dayRoutines.reduce((s, r) => s + r.weight, 0)
-    const taskUnits = dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
-    const units = routineUnits + taskUnits
+    const units = dayRoutines.reduce((s, r) => s + r.weight, 0) + dayTasks.reduce((s, t) => s + t.weight + t.accumulation, 0)
     const isToday = ds === todayStr()
     const overLimit = dailyLimit > 0 && units > dailyLimit
     const routineChips = dayRoutines.map((r) => {
       const log = routineLogs.find((l) => l.routineId === r.id && l.date === ds)
       const dayTime = r.times?.[String(dow)] ?? r.time
-      return `<div class="cal-routine-chip ${log?.status === 'done' ? 'cal-done' : log?.status === 'skipped' ? 'cal-skipped' : ''}" style="border-left:3px solid ${r.color}" data-routine-id="${r.id}" data-date="${ds}" title="${escapeAttr(r.title)}">${escapeAttr(r.title.slice(0, 16))}${r.title.length > 16 ? '…' : ''}${dayTime ? ' ' + dayTime : ''}</div>`
+      return `<div class="cal-routine-chip ${log?.status === 'done' ? 'cal-done' : log?.status === 'skipped' ? 'cal-skipped' : ''}" style="border-left:3px solid ${r.color}" data-routine-id="${r.id}" data-date="${ds}">${escapeAttr(r.title)}${dayTime ? ' <span class="cal-chip-time">' + dayTime + '</span>' : ''}</div>`
     }).join('')
-    const taskChips = dayTasks.map((t) => `<div class="cal-task-chip task-type-flexible" data-task-id="${t.id}" title="${escapeAttr(t.title)}">${escapeAttr(t.title.slice(0, 18))}${t.title.length > 18 ? '…' : ''}</div>`).join('')
-    return `<div class="calendar-day ${isToday ? 'today' : ''}">
-      <div class="calendar-day-header"><span class="cal-day-name">${DAYS_SHORT[dow]}</span><span class="cal-day-num ${isToday ? 'today' : ''}">${day.getDate()}</span></div>
-      ${dailyLimit ? `<div class="cal-units ${overLimit ? 'over-limit' : ''}">${units}/${dailyLimit}</div>` : units > 0 ? `<div class="cal-units">${units} ед.</div>` : ''}
-      <div class="cal-tasks">${routineChips}${taskChips}</div>
-      <button class="cal-add-btn" data-date="${ds}">+</button>
-    </div>`
-  }).join('')}</div>`
+    const taskChips = dayTasks.map((t) => `<div class="cal-task-chip task-type-flexible" data-task-id="${t.id}">${escapeAttr(t.title)}${t.scheduledTime ? ' <span class="cal-chip-time">' + t.scheduledTime + '</span>' : ''}</div>`).join('')
+    return { ds, dow, isToday, overLimit, units, routineChips, taskChips, hasItems: dayRoutines.length + dayTasks.length > 0 }
+  }
 
-  container.innerHTML = nav + grid
+  let calendarHtml: string
+  if (isMobile) {
+    // Вертикальный вид для мобильных
+    calendarHtml = `<div class="calendar-mobile">${days.map((day) => {
+      const { ds, dow, isToday, overLimit, units, routineChips, taskChips, hasItems } = buildDayItems(day)
+      const dateLabel = day.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
+      return `<div class="cal-mobile-day ${isToday ? 'today' : ''} ${!hasItems ? 'empty' : ''}">
+        <div class="cal-mobile-day-header">
+          <div class="cal-mobile-date">
+            <span class="cal-mobile-dow">${DAYS_SHORT[dow]}</span>
+            <span class="cal-mobile-num ${isToday ? 'today' : ''}">${day.getDate()}</span>
+            <span class="cal-mobile-month">${day.toLocaleDateString('ru', { month: 'short' })}</span>
+          </div>
+          ${units > 0 ? `<span class="cal-mobile-units ${overLimit ? 'over-limit' : ''}">${units}${dailyLimit ? '/' + dailyLimit : ''} ед.</span>` : ''}
+          <button class="cal-mobile-add" data-date="${ds}" title="Добавить задачу">+</button>
+        </div>
+        ${hasItems ? `<div class="cal-mobile-items">${routineChips}${taskChips}</div>` : ''}
+      </div>`
+    }).join('')}</div>`
+  } else {
+    // Десктопный сетчатый вид
+    calendarHtml = `<div class="calendar-grid">${days.map((day) => {
+      const { ds, dow, isToday, overLimit, units, routineChips, taskChips } = buildDayItems(day)
+      return `<div class="calendar-day ${isToday ? 'today' : ''}">
+        <div class="calendar-day-header"><span class="cal-day-name">${DAYS_SHORT[dow]}</span><span class="cal-day-num ${isToday ? 'today' : ''}">${day.getDate()}</span></div>
+        ${dailyLimit ? `<div class="cal-units ${overLimit ? 'over-limit' : ''}">${units}/${dailyLimit}</div>` : units > 0 ? `<div class="cal-units">${units} ед.</div>` : ''}
+        <div class="cal-tasks">${routineChips}${taskChips}</div>
+        <button class="cal-add-btn" data-date="${ds}">+</button>
+      </div>`
+    }).join('')}</div>`
+  }
+
+  container.innerHTML = nav + calendarHtml
+
   document.querySelector('#cal-prev')!.addEventListener('click', () => { calendarWeekOffset--; renderCalendarView() })
   document.querySelector('#cal-next')!.addEventListener('click', () => { calendarWeekOffset++; renderCalendarView() })
   document.querySelector('#cal-today')?.addEventListener('click', () => { calendarWeekOffset = 0; renderCalendarView() })
 
-  // клик по рутине — меню действий
   container.querySelectorAll<HTMLElement>('.cal-routine-chip').forEach((chip) => {
     chip.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -1890,8 +1916,12 @@ function renderCalendarView() {
     const task = tasks.find((t) => t.id === chip.dataset.taskId)
     if (task) chip.addEventListener('click', () => { editingTask = task; tasksSubView = 'task-form'; renderTasksSection() })
   })
-  container.querySelectorAll<HTMLButtonElement>('.cal-add-btn').forEach((btn) => {
-    btn.addEventListener('click', () => { editingTask = { scheduledDate: btn.dataset.date } as ScheduledTask; tasksSubView = 'task-form'; renderTasksSection() })
+  container.querySelectorAll<HTMLButtonElement>('.cal-add-btn, .cal-mobile-add').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      editingTask = { scheduledDate: btn.dataset.date } as ScheduledTask
+      tasksSubView = 'task-form'; renderTasksSection()
+    })
   })
 }
 
