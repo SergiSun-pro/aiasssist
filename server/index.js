@@ -112,6 +112,20 @@ function normalizeDate(value) {
   return date.toISOString().slice(0, 10)
 }
 
+function normalizeChatMessages(messages) {
+  return messages.map((message) => {
+    const safeRole = ['system', 'assistant', 'user'].includes(message?.role) ? message.role : 'user'
+    const safeContent =
+      typeof message?.content === 'string' || Array.isArray(message?.content)
+        ? message.content
+        : ''
+    return {
+      role: safeRole,
+      content: safeContent
+    }
+  })
+}
+
 
 app.post('/api/chat', async (req, res) => {
   const apiKey = process.env.OPENROUTER_API_KEY
@@ -137,17 +151,7 @@ app.post('/api/chat', async (req, res) => {
       },
       body: JSON.stringify({
         model,
-        messages: messages.map((message) => {
-          const safeRole = message.role === 'assistant' ? 'assistant' : 'user'
-          const safeContent =
-            typeof message.content === 'string' || Array.isArray(message.content)
-              ? message.content
-              : ''
-          return {
-            role: safeRole,
-            content: safeContent
-          }
-        })
+        messages: normalizeChatMessages(messages)
       })
     })
 

@@ -31,8 +31,10 @@ export async function ensureDefaultAdmin() {
   const password = process.env.ADMIN_PASSWORD || 'admin123'
   const admin = { id: createId(), username, passwordHash: hashPassword(password), role: 'admin', createdAt: Date.now() }
   await writeUsers([admin])
-  console.log(`Создан admin: ${username} / ${password}`)
-  console.log('Смените пароль в .env через ADMIN_USERNAME и ADMIN_PASSWORD')
+  console.log(`Создан admin: ${username}`)
+  if (!process.env.ADMIN_PASSWORD) {
+    console.warn('ADMIN_PASSWORD не задан. Используется дефолтный пароль, смените его в .env.')
+  }
 }
 
 export { createId }

@@ -11,7 +11,9 @@ export function hashPassword(password) {
 
 export function verifyPassword(password, stored) {
   const [salt, hash] = stored.split(':')
+  if (!salt || !hash) return false
   const hashVerify = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex')
+  if (hash.length !== hashVerify.length) return false
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(hashVerify, 'hex'))
 }
 

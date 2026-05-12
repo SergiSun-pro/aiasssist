@@ -1872,7 +1872,6 @@ function renderCalendarView() {
     // Вертикальный вид для мобильных
     calendarHtml = `<div class="calendar-mobile">${days.map((day) => {
       const { ds, dow, isToday, overLimit, units, routineChips, taskChips, hasItems } = buildDayItems(day)
-      const dateLabel = day.toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
       return `<div class="cal-mobile-day ${isToday ? 'today' : ''} ${!hasItems ? 'empty' : ''}">
         <div class="cal-mobile-day-header">
           <div class="cal-mobile-date">

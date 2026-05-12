@@ -10,7 +10,13 @@ export default async function handler(req, res) {
     return
   }
 
-  const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body ?? {}
+  let body
+  try {
+    body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body ?? {}
+  } catch {
+    res.status(400).json({ error: 'Invalid JSON body' })
+    return
+  }
   const { model, messages } = body
   if (!model || !Array.isArray(messages)) {
     res.status(400).json({ error: 'Неверный payload: ожидаются model и messages[]' })
@@ -26,7 +32,13 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model,
-        messages
+        messages: messages.map((message) => ({
+          role: ['system', 'assistant', 'user'].includes(message?.role) ? message.role : 'user',
+          content:
+            typeof message?.content === 'string' || Array.isArray(message?.content)
+              ? message.content
+              : ''
+        }))
       })
     })
 
